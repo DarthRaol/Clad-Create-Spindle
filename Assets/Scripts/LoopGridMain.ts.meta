@@ -1,0 +1,66 @@
+- !<AssetImportMetadata/37dbb339-00ae-414e-b399-aeb7440882e5>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 821bc6b3-456d-44a7-aec2-4319ceb261d4
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 821bc6b3-456d-44a7-aec2-4319ceb261d4
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> ab33aa4f-a115-4eab-8a5d-2a730c8b5952
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/ab33aa4f-a115-4eab-8a5d-2a730c8b5952>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 1546492b-eeba-40c1-a9f8-debc3f4910fc
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    armedCellColor: false
+    cellMinAimSeconds: false
+    idleCellColor: false
+    masterVolume: false
+    playingCellColor: false
+    tapSfxEnabled: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - masterVolume: 0.850000
+      idleCellColor: !<Vec4> {x: 0.100000, y: 0.220000, z: 0.250000, w: 1.000000}
+      armedCellColor: !<Vec4> {x: 0.950000, y: 0.650000, z: 0.150000, w: 1.000000}
+      playingCellColor: !<Vec4> {x: 0.200000, y: 0.900000, z: 1.000000, w: 1.000000}
+      tapSfxEnabled: true
+      cellMinAimSeconds: 0.150000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">LoopGridMain – Live Loops grid controller</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">Settings</span>"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float masterVolume = 0.85 {"hint":"Overall playback volume for all loops (per-row mix trims are applied on top)", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input vec4 idleCellColor = "{0.10,0.22,0.25,1}" {"hint":"Cell color when the cell is idle (not playing, not armed)", "widget":"color"}'
+    - '// @input vec4 armedCellColor = "{0.95,0.65,0.15,1}" {"hint":"Cell color while armed and waiting for the next downbeat (pulses)", "widget":"color"}'
+    - '// @input vec4 playingCellColor = "{0.20,0.90,1.00,1}" {"hint":"Cell color while its loop is playing", "widget":"color"}'
+    - '// @input bool tapSfxEnabled = true {"hint":"Play a short click when a cell is armed or stopped"}'
+    - '// @input float cellMinAimSeconds {"hint":"Extra strictness on top of the built-in travel guard: require the cell to be hovered (targeted, hand open) this many seconds before the pinch starts. 0 = gesture-state guard only, which already rejects cells a pinched hand sweeps through.", "widget":"slider", "min":0, "max":0.5, "step":0.01}'
+    - '// @ui {"widget":"group_end"}'

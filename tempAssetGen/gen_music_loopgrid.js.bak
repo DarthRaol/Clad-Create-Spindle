@@ -1,0 +1,210 @@
+// LoopGrid loop generator — 40 loops (5 rows x 8 columns), one key, one tempo.
+// Key: A minor. Progression shared by ALL pitched loops: Am F C G (2 beats each) over 2 bars of 4/4.
+// Tempo: 105 BPM — chosen so one beat = 25200 samples EXACTLY at 44.1kHz; a 2-bar loop is
+// exactly 201600 samples, so loops are sample-accurate in length and drift-free.
+// Render trick: build each pattern over 4 bars (pattern x2), render, extract the SECOND
+// 2-bar chunk — release tails from pass 1 bleed into the chunk start, so the loop wraps seamlessly.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const ENGINE = 'C:/Users/Raol/.claude/plugins/cache/ls-extensions/ls-clad/1.0.0/skills/build-music/tools';
+const m = require(ENGINE);
+const PROJECT_ASSETS_SFX = 'C:/Users/Raol/Documents/SPECS/Spindle/Assets/GeneratedSFX';
+fs.mkdirSync(PROJECT_ASSETS_SFX, { recursive: true });
+
+const BPM = 105;
+const SR = 44100;
+const LOOP_BEATS = 8;                 // 2 bars of 4/4
+const LOOP_SAMPLES = 201600;          // 8 * (44100*60/105) — integer by construction
+const CHUNK_START = LOOP_SAMPLES;     // extract second repetition
+const SEG = 2;                        // beats per chord (4 chords over 8 beats)
+
+// ---------- shared harmony: Am F C G ----------
+let chords;
+try {
+  const r = m.composeChords({
+    genre: 'pop', key: 'A3', scale: 'minor',
+    progression: ['i', 'VI', 'III', 'VII'],
+    voicing: 'closeVoiced', extension: 'none', voice: 'electricPiano',
+  });
+  chords = r.chords;
+  console.log('harmony meta:', JSON.stringify(r.meta));
+} catch (e) {
+  console.log('composeChords failed (' + e.message + '), falling back to buildProgression');
+  chords = m.music_theory.buildProgression('A3', 'minor', ['i', 'VI', 'III', 'VII']);
+}
+if (!chords || chords.length !== 4) throw new Error('expected 4 chords, got ' + (chords && chords.length));
+const wantPC = [9, 5, 0, 7]; // A F C G
+chords.forEach((c, i) => {
+  const pc = ((c.root % 12) + 12) % 12;
+  if (pc !== wantPC[i]) console.log('WARN chord', i, 'root pc', pc, 'expected', wantPC[i]);
+});
+console.log('chord roots:', chords.map(c => c.root).join(','), 'notes:', JSON.stringify(chords.map(c => c.notes)));
+
+// bass register fold: pitch class placed in E1..D#2 (28..39)
+function bassRoot(ch) { let v = 24 + (((ch.root % 12) + 12) % 12); if (v < 28) v += 12; return v; }
+
+// repeat a 2-bar event list into 4 bars (offset copy at +8 beats)
+function rep4(events) {
+  const out = [];
+  for (const e of events) { out.push({ ...e }); out.push({ ...e, time: e.time + LOOP_BEATS }); }
+  return out;
+}
+// build events per chord segment: fn(chordIndex, segStartBeats) -> partial events (times relative to seg)
+function perSeg(fn) {
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    for (const e of fn(i, i * SEG)) out.push({ ...e, time: e.time + i * SEG });
+  }
+  return out;
+}
+
+// ---------- ROW 1: BASS (8 patterns) ----------
+function bassEvents(col) {
+  return perSeg((ci) => {
+    const r = bassRoot(chords[ci]), f = r + 7, o = r + 12;
+    switch (col) {
+      case 0: return [{ time: 0, beats: 1.9, value: r, velocity: 92 }];
+      case 1: return [{ time: 0, beats: 1.35, value: r, velocity: 100 }, { time: 1.5, beats: 0.4, value: r, velocity: 78 }];
+      case 2: return [0, 0.5, 1, 1.5].map((t, k) => ({ time: t, beats: 0.42, value: k % 2 ? f : r, velocity: k % 2 ? 82 : 98 }));
+      case 3: return [0, 0.5, 1, 1.5].map((t, k) => ({ time: t, beats: 0.42, value: k % 2 ? o : r, velocity: k % 2 ? 85 : 100 }));
+      case 4: return [0.5, 1.5].map(t => ({ time: t, beats: 0.38, value: r, velocity: 100 }));
+      case 5: return [
+        { time: 0, beats: 0.22, value: r, velocity: 105 }, { time: 0.75, beats: 0.2, value: r, velocity: 62 },
+        { time: 1.0, beats: 0.22, value: f, velocity: 90 }, { time: 1.5, beats: 0.3, value: o, velocity: 84 },
+        { time: 1.75, beats: 0.2, value: r, velocity: 58 }];
+      case 6: { const seq = [r, r, o, r, f, r, o, r]; return seq.map((v, k) => ({ time: k * 0.25, beats: 0.2, value: v, velocity: (k % 4 === 0) ? 105 : 72 })); }
+      case 7: return [0, 0.5, 1, 1.5].map((t, k) => ({ time: t, beats: 0.44, value: k === 3 ? f : r, velocity: (k % 2 === 0) ? 106 : 88 }));
+    }
+  });
+}
+const BASS_SPEC = [
+  ['subBass', { lpf: 240, gain: 0.72 }, null],
+  ['subBass', { lpf: 260, gain: 0.72 }, null],
+  ['subBass', { lpf: 300, gain: 0.68 }, null],
+  ['synthBass', { lpf: 900, hpf: 45, gain: 0.6 }, null],
+  ['synthBass', { lpf: 1000, hpf: 45, gain: 0.62 }, 'strict'],
+  ['synthBass', { lpf: 1200, hpf: 45, gain: 0.58 }, null],
+  ['acidBass', { lpf: 1400, hpf: 45, gain: 0.5 }, 'strict'],
+  ['acidBass', { lpf: 1100, hpf: 45, gain: 0.55 }, 'strict'],
+];
+
+// ---------- ROW 2: KEYS / CHORDS (8 comp patterns) ----------
+function keysEvents(col) {
+  return perSeg((ci) => {
+    const n = chords[ci].notes;
+    const hit = (t, beats, vel, notes) => notes.map(v => ({ time: t, beats, value: v, velocity: vel }));
+    switch (col) {
+      case 0: return hit(0, 0.9, 62, n);                                       // pad swells (short gate, long release)
+      case 1: return hit(0, 1.7, 72, n);                                       // EP block chords
+      case 2: return n.map((v, k) => ({ time: k * 0.12, beats: 1.6, value: v, velocity: 70 })); // strummed EP
+      case 3: return [...hit(0.5, 0.6, 74, n), ...hit(1.5, 0.45, 66, n)];      // piano off-beat pushes
+      case 4: return [...hit(0, 0.28, 84, n), ...hit(1.0, 0.25, 76, n), ...hit(1.5, 0.25, 70, n)]; // organ stabs
+      case 5: return [...hit(0, 0.35, 78, n), ...hit(0.75, 0.6, 70, n)];       // charleston EP
+      case 6: { const seq = [n[0], n[1] || n[0], n[2] || n[0], (n[2] || n[0]) + 12]; return seq.map((v, k) => ({ time: k * 0.5, beats: 0.4, value: v, velocity: 76 })); } // pluck arp
+      case 7: return [...hit(0, 1.85, 92, n), { time: 0, beats: 1.85, value: n[n.length - 1] + 12, velocity: 80 }]; // full organ + octave
+    }
+  });
+}
+const KEYS_SPEC = [
+  ['pad', { hpf: 180, lpf: 2600, chorus: { voices: 3, mix: 0.35 }, reverb: 'largeHall', gain: 0.26 }],
+  ['electricPiano', { hpf: 200, lpf: 3600, reverb: 'mediumRoom', gain: 0.42 }],
+  ['electricPiano', { hpf: 200, lpf: 3600, reverb: 'mediumRoom', gain: 0.4 }],
+  ['piano', { hpf: 220, lpf: 4200, reverb: 'mediumRoom', gain: 0.4 }],
+  ['organ', { hpf: 200, lpf: 3800, reverb: 'smallRoom', gain: 0.36 }],
+  ['electricPiano', { hpf: 200, lpf: 3400, reverb: 'mediumRoom', gain: 0.42 }],
+  ['pluckSynth', { hpf: 260, lpf: 4500, reverb: 'mediumRoom', gain: 0.38 }],
+  ['organ', { hpf: 180, lpf: 4200, reverb: 'smallRoom', gain: 0.34 }],
+];
+
+// ---------- ROW 3: LEAD (A minor pentatonic motifs) ----------
+const LEAD_SPEC = [
+  ['0 ~ 2 ~ ~ ~ ~ ~', 'kalimba', 'A4', { hpf: 300, lpf: 5200, reverb: 'mediumRoom', gain: 0.4 }],
+  ['0 2 4 ~ 2 0 ~ ~', 'marimba', 'A4', { hpf: 300, lpf: 5200, reverb: 'mediumRoom', gain: 0.4 }],
+  ['~ 0 ~ 2 ~ 4 ~ 3', 'vibraphone', 'A4', { hpf: 300, lpf: 5000, reverb: 'largeHall', gain: 0.38 }],
+  ['4 ~ 3 2 ~ 0 2 ~', 'flute', 'A4', { hpf: 400, lpf: 5500, reverb: 'largeHall', gain: 0.36 }],
+  ['[0 2] 4 [2 4] 5 4 [2 0] ~ ~', 'pluckString', 'A4', { hpf: 350, lpf: 5200, reverb: 'mediumRoom', gain: 0.4 }],
+  ['7 ~ 5 4 ~ 2 4 ~', 'musicBox', 'A5', { hpf: 500, lpf: 7000, reverb: 'largeHall', gain: 0.36 }],
+  ['0 0 [2 3] 4 ~ 4 [5 4] 2', 'synthLead', 'A4', { hpf: 400, lpf: 6000, reverb: 'mediumRoom', gain: 0.3 }],
+  ['7 [5 4] 5 [4 2] 4 [2 0] 2 4', 'synthLead', 'A5', { hpf: 450, lpf: 6500, reverb: 'mediumRoom', gain: 0.28 }],
+];
+function leadEvents(col) {
+  const [pat, , root] = LEAD_SPEC[col];
+  const ev = m.parseMini(pat, { cycleBeats: LOOP_BEATS });
+  m.scale(ev, 'pentatonicMinor', root);
+  return ev;
+}
+
+// ---------- ROW 4: PERCUSSION ----------
+const dm = m.DRUM_MAP;
+function pk(key) { const e = dm[key]; if (!e) throw new Error('DRUM_MAP missing ' + key); return e; }
+// hits: array of [timeBeats, velocity]
+function percHits(key, hits, fx, quantize) {
+  const e = pk(key);
+  const events = hits.map(([t, v]) => ({ time: t, beats: 0.25, value: e.midi, velocity: v }));
+  return { voice: e.voice, events, fx, quantize };
+}
+function grid(step, len, velFn) { const out = []; for (let t = 0; t < len - 1e-9; t += step) out.push([t, velFn(t)]); return out; }
+function percParts(col) {
+  const shakerFx = { hpf: 1800, gain: 0.5 }, hatFx = { hpf: 2500, gain: 0.45 }, clapFx = { hpf: 500, gain: 0.5, reverb: 'smallRoom' };
+  const rimFx = { hpf: 800, gain: 0.5 }, tomFx = { lpf: 2200, gain: 0.5 };
+  switch (col) {
+    case 0: return [percHits('shaker', grid(0.5, 8, t => (t % 1 === 0 ? 62 : 44)), shakerFx)];
+    case 1: return [percHits('rs', [[1, 72], [2.5, 60], [5, 72], [6.75, 64]], rimFx)];
+    case 2: return [percHits('hh', grid(0.25, 8, t => (t % 1 === 0 ? 52 : t % 0.5 === 0 ? 40 : 30)), hatFx, 'strict')];
+    case 3: return [percHits('clap', [[1, 84], [3, 84], [5, 84], [7, 86]], clapFx), percHits('shaker', grid(0.5, 8, () => 40), shakerFx)];
+    case 4: return [percHits('oh', grid(1, 8, () => 62).map(([t, v]) => [t + 0.5, v]), { hpf: 2000, gain: 0.42 }, 'strict')];
+    case 5: return [percHits('tomL', [[0, 78], [1.5, 60], [3.5, 70], [4, 78], [5.5, 60], [7, 66]], tomFx), percHits('tomH', [[0.75, 58], [2.5, 66], [4.75, 58], [6.5, 70]], tomFx)];
+    case 6: return [percHits('shaker', grid(0.25, 8, t => (t % 1 === 0 ? 64 : t % 0.5 === 0 ? 46 : 34)), shakerFx, 'strict'), percHits('rs', [[1.75, 62], [3.25, 58], [5.75, 62], [7.25, 60]], rimFx)];
+    case 7: return [percHits('shaker', grid(0.25, 8, t => (t % 1 === 0 ? 68 : 42)), shakerFx, 'strict'), percHits('clap', [[1, 82], [3, 82], [5, 82], [7, 84]], clapFx), percHits('oh', grid(1, 8, () => 58).map(([t, v]) => [t + 0.5, v]), { hpf: 2000, gain: 0.4 }, 'strict')];
+  }
+}
+
+// ---------- render helpers ----------
+function extractLoop(out) {
+  const L = new Float32Array(LOOP_SAMPLES), R = new Float32Array(LOOP_SAMPLES);
+  const srcL = out.left, srcR = out.right || out.left;
+  const n = Math.min(LOOP_SAMPLES, Math.max(0, srcL.length - CHUNK_START));
+  for (let i = 0; i < n; i++) { L[i] = srcL[CHUNK_START + i]; R[i] = srcR[CHUNK_START + i]; }
+  return { left: L, right: R, copied: n };
+}
+function peakOf(b) { let p = 0; for (let i = 0; i < b.left.length; i++) { const a = Math.abs(b.left[i]), c = Math.abs(b.right[i]); if (a > p) p = a; if (c > p) p = c; } return p; }
+function writeLoop(name, tracks) {
+  const out = m.render(tracks, { bpm: BPM, master: { normalize: 'peak' } });
+  const chunk = extractLoop(out);
+  const p = peakOf(chunk);
+  m.WavBuilder.write({ left: chunk.left, right: chunk.right }, path.join(PROJECT_ASSETS_SFX, name + '.wav'));
+  console.log(name, 'peak', p.toFixed(3), 'copied', chunk.copied, p < 0.03 ? 'WARN_QUIET' : 'ok');
+  return p;
+}
+
+// ---------- generate all 40 ----------
+const DRUM_GENRES = ['lofi', 'boom-bap', 'pop', 'rock', 'house', 'funk', 'trap', 'edm-uplift'];
+const DRUM_ENERGY = [0.35, 0.5, 0.55, 0.65, 0.7, 0.75, 0.8, 0.95];
+let quiet = [];
+for (let col = 0; col < 8; col++) {
+  // Row 0: drums — composeDrums returns ready track descriptors over 4 bars
+  const drums = m.composeDrums({ genre: DRUM_GENRES[col], bars: 4, energy: DRUM_ENERGY[col], fills: false, embellish: 0.25 });
+  if (drums.meta) console.log('drums R0C' + col, JSON.stringify(drums.meta));
+  if (writeLoop('Loop_R0C' + col, [...drums]) < 0.03) quiet.push('R0C' + col);
+
+  // Row 1: bass
+  const [bv, bfx, bq] = BASS_SPEC[col];
+  const bt = m.track('bass', bv, rep4(bassEvents(col)), Object.assign({ fx: bfx }, bq ? { quantize: bq } : {}));
+  if (writeLoop('Loop_R1C' + col, [bt]) < 0.03) quiet.push('R1C' + col);
+
+  // Row 2: keys
+  const [kv, kfx] = KEYS_SPEC[col];
+  const kt = m.track('keys', kv, rep4(keysEvents(col)), { fx: kfx });
+  if (writeLoop('Loop_R2C' + col, [kt]) < 0.03) quiet.push('R2C' + col);
+
+  // Row 3: lead
+  const [, lv, , lfx] = LEAD_SPEC[col];
+  const lt = m.track('lead', lv, rep4(leadEvents(col)), { fx: lfx });
+  if (writeLoop('Loop_R3C' + col, [lt]) < 0.03) quiet.push('R3C' + col);
+
+  // Row 4: perc — possibly multiple voices
+  const pts = percParts(col).map((p, i) => m.track('perc' + i, p.voice, rep4(p.events), Object.assign({ fx: p.fx }, p.quantize ? { quantize: p.quantize } : {})));
+  if (writeLoop('Loop_R4C' + col, pts) < 0.03) quiet.push('R4C' + col);
+}
+console.log('DONE. quiet loops:', quiet.length ? quiet.join(',') : 'none');
