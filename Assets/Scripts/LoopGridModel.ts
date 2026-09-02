@@ -8,10 +8,22 @@
  *
  * Grid shape: ROWS instrument rows x COLS scene columns. Per row at most one
  * cell plays at a time (GarageBand Live Loops semantics).
+ *
+ * CUSTOM cells: rows 0 (Drums) and 4 (Perc) each have a 9th cell at column
+ * index CUSTOM_COL (8) holding the user-authored 16-step pattern. It is a
+ * normal cell to this model — tapCell arms/stop-arms/cancels it exactly like
+ * columns 0..7 and commit() emits its code as letter+9 ("D9"/"P9") — but it
+ * belongs to NO scene column: armScene(col) only ever arms col 0..7, so a
+ * scene launch replaces a playing custom pattern (correct Live Loops
+ * semantics) yet can never arm the custom cell itself.
  */
 
 export const LOOPGRID_ROWS = 5
 export const LOOPGRID_COLS = 8
+/** Column index of the per-row Custom cell (export code digit 9). */
+export const CUSTOM_COL = 8
+/** Rows that have a Custom cell: 0 = Drums, 4 = Perc. */
+export const CUSTOM_ROWS = [0, 4]
 
 /** Row letters used by the export encoding: Drums Bass Keys Lead Perc. */
 export const ROW_LETTERS = ["D", "B", "K", "L", "P"]
@@ -88,7 +100,9 @@ export class LoopGridModel {
     return "armed"
   }
 
-  /** Column header tapped: arm the whole scene (every row launches that column). */
+  /** Column header tapped: arm the whole scene (every row launches that column).
+   *  `col` is always 0..7 — scene columns never include CUSTOM_COL, so this
+   *  can replace a playing custom pattern but never arm one. */
   armScene(col: number): void {
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
       // Re-arming the already-active column retriggers it on the downbeat —

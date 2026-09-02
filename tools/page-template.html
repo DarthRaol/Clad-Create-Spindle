@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoopGrid MIDI Export</title>
+<!--
+  GENERATED FILE (docs/index.html) — do not edit directly.
+  Template: tools/page-template.html. The LG1 parser and MIDI writer are
+  spliced VERBATIM from tools/loopgrid-midi.js, and the loop table from
+  tools/loops.json, by:  node tools/build-page.js
+  Drift guard (byte-compares page output against the Node tool):
+                        node tools/build-page.test.js
+-->
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1b1a; --muted: #6b6862;
+    --line: #dedad2; --accent: #7a4dd8; --accent-ink: #ffffff;
+    --warn-bg: #fff4dc; --warn-line: #e0b34c; --ok: #2c7a4b; --err: #b3372f;
+    --code-bg: #efece6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161514; --panel: #201f1d; --ink: #ece9e4; --muted: #9b968e;
+      --line: #38352f; --accent: #9d79ec; --accent-ink: #17111f;
+      --warn-bg: #2e2718; --warn-line: #9c7c2f; --ok: #6cc793; --err: #e07a72;
+      --code-bg: #2a2825;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  textarea {
+    width: 100%; min-height: 72px; resize: vertical; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--code-bg); color: var(--ink);
+    font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 10px;
+  }
+  button {
+    font: inherit; border: 0; border-radius: 8px; padding: 10px 18px;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 600;
+  }
+  button.secondary { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .error { color: var(--err); font-weight: 600; margin-top: 10px; }
+  .hidden { display: none; }
+  table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  td, th { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .checklist {
+    background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .checklist h2 { margin-bottom: 6px; }
+  .checklist ul { margin: 8px 0 0; padding-left: 22px; }
+  .checklist li { margin-bottom: 6px; }
+  .checklist strong { font-variant-numeric: tabular-nums; }
+  ol.steps { margin: 8px 0 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 8px; }
+  .dl-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .hint { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; }
+  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>LoopGrid → GarageBand</h1>
+  <p class="sub">Paste the export code from the Lens panel to turn your session into MIDI.</p>
+
+  <section>
+    <h2>Export code</h2>
+    <textarea id="code" placeholder="LG1|105|Am|0:D1,B1;4:K3|END:8|…" spellcheck="false"></textarea>
+    <div class="dl-row"><button id="decode">Decode</button></div>
+    <div id="parseError" class="error hidden"></div>
+  </section>
+
+  <div id="result" class="hidden">
+    <section>
+      <h2>Your session</h2>
+      <table id="summary"></table>
+    </section>
+
+    <div class="checklist">
+      <h2>⚠️ Before importing — set these in your GarageBand song first</h2>
+      <p style="margin:6px 0 0">GarageBand imports MIDI at the <em>song's</em> existing
+      tempo and ignores the file's, and a fixed-length song section truncates the import.</p>
+      <ul>
+        <li>Tempo: <strong id="ckTempo">105</strong> (song settings ⚙ → Tempo)</li>
+        <li>Key: <strong id="ckKey">A minor</strong> (song settings ⚙ → Key)</li>
+        <li>Song section: <strong>Automatic</strong> (tap <code>+</code> at the top-right of
+            Tracks view → Section A → Automatic) — otherwise the import is cut off
+            at the section boundary</li>
+      </ul>
+    </div>
+
+    <section>
+      <h2>How to import</h2>
+      <p class="muted" style="margin:0 0 4px">There is no “Open in GarageBand” for
+      .mid files — import happens inside a song:</p>
+      <ol class="steps">
+        <li>Create a song and switch to <strong>Tracks view</strong> (the mixer-style icon).</li>
+        <li>Tap the <strong>Loop Browser</strong> (loop icon, top right) → <strong>Files</strong> tab
+            → <em>Browse items from the Files app</em> → locate the downloaded .mid.</li>
+        <li><strong>Touch and hold</strong> the file, then <strong>drag it into the tracks area</strong>
+            and release at bar 1.</li>
+        <li>Stems only: create a <strong>Drums</strong> track first and drop the Drums (and Perc)
+            stem directly <em>onto that track</em> so it lands on a drum kit.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Download</h2>
+      <div class="dl-row">
+        <button id="dlArrangement">Arrangement (1 file)</button>
+        <button id="dlStems" class="secondary">Stems (5 files)</button>
+      </div>
+      <p class="hint">The arrangement imports as one pitched Keyboard track per row —
+      quickest overview, but drums won't sound like drums. Stems are single-track
+      files, so the Drums and Perc stems can be dropped onto a Drums track and land
+      on a real kit.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+'use strict';
+/* BEGIN LOOPGRID LIB — tools/loopgrid-midi.js spliced verbatim by build-page.js */
+__LOOPGRID_MIDI_LIB__
+/* END LOOPGRID LIB */
+
+/* BEGIN LOOPS — tools/loops.json spliced by build-page.js */
+const LOOPS = __LOOPS_JSON__;
+/* END LOOPS */
+
+/* ── page wiring: DISPLAY ONLY. All parsing, arrangement and MIDI writing
+   comes from the spliced LoopGridMidi library above — this section must never
+   re-implement any LG1/SMF logic. ─────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+let state = null;
+
+function download(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function keyLabel(k) { return k === 'Am' ? 'A minor' : k; }
+
+function summarize(parsed, stems) {
+  const segs = LoopGridMidi.buildArrangement(parsed.timeline, parsed.endBar);
+  const playing = new Set(stems.map((s) => s.row));
+  let html = '<tr><th>Tempo</th><td>' + parsed.bpm + ' BPM</td></tr>' +
+             '<tr><th>Key</th><td>' + keyLabel(parsed.key) + '</td></tr>' +
+             '<tr><th>Length</th><td>' + parsed.endBar + ' bars</td></tr>';
+  for (let r = 0; r < LoopGridMidi.ROW_NAMES.length; r++) {
+    const desc = !playing.has(r) ? '<span class="muted">—</span>'
+      : segs[r].map((s) => 'loop ' + s.col + ' (bar ' + s.startBar + '–' + s.endBar + ')').join(', ');
+    html += '<tr><th>' + LoopGridMidi.ROW_NAMES[r] + '</th><td>' + desc + '</td></tr>';
+  }
+  $('summary').innerHTML = html;
+}
+
+$('decode').addEventListener('click', () => {
+  $('parseError').classList.add('hidden');
+  $('result').classList.add('hidden');
+  state = null;
+  try {
+    const input = $('code').value;
+    const parsed = LoopGridMidi.parseLG1(input);
+    const combined = LoopGridMidi.codeToMidi(input, LOOPS); // also validates bpm vs the loop table
+    const stems = LoopGridMidi.codeToStems(input, LOOPS);
+    state = { parsed, combined, stems };
+  } catch (e) {
+    $('parseError').textContent = e.message;
+    $('parseError').classList.remove('hidden');
+    return;
+  }
+  summarize(state.parsed, state.stems);
+  $('ckTempo').textContent = state.parsed.bpm;
+  $('ckKey').textContent = keyLabel(state.parsed.key);
+  const anyNotes = state.stems.length > 0;
+  $('dlArrangement').disabled = !anyNotes;
+  $('dlStems').disabled = !anyNotes;
+  $('dlStems').textContent = 'Stems (' + state.stems.length + ' file' + (state.stems.length === 1 ? '' : 's') + ')';
+  $('result').classList.remove('hidden');
+});
+
+$('dlArrangement').addEventListener('click', () => {
+  if (!state) return;
+  download('LoopGrid-Arrangement.mid', state.combined);
+});
+
+$('dlStems').addEventListener('click', () => {
+  if (!state) return;
+  state.stems.forEach((s, i) => setTimeout(() => download('LoopGrid-' + s.name + '.mid', s.midi), i * 350));
+});
+</script>
+</body>
+</html>

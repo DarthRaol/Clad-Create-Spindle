@@ -6,10 +6,11 @@
  * exactly 2 bars = 201600 samples at 44.1 kHz, so every combination is
  * harmonically and rhythmically compatible).
  *
- * Owns: lifecycle, the 12 AudioComponents (5 rows x 2 pooled loop slots +
- * 2 tap SFX — see the pool comment at rowSlots), the
- * per-frame transport tick, and orchestration between the pure-logic modules
- * (LoopGridTransport / LoopGridModel / LoopGridExportEncoder) and the UI
+ * Owns: lifecycle, the 22 AudioComponents (5 rows x 2 pooled loop slots +
+ * 5 custom-pattern lanes x 2 round-robin one-shot slots + 2 tap SFX — see the
+ * pool comments at rowSlots / laneSlots), the per-frame transport tick, and
+ * orchestration between the pure-logic modules (LoopGridTransport /
+ * LoopGridModel / LoopGridCustomPattern / LoopGridExportEncoder) and the UI
  * modules (LoopGridUI / LoopGridExportPanelUI).
  * Must NOT: contain layout code (UI modules own that) or musical state
  * transitions (the model owns those).
@@ -23,6 +24,10 @@
  * - A tapped cell is ARMED and fires on the first frame at/after the next
  *   downbeat — launch jitter is bounded by one frame (~16-33 ms), the best
  *   the per-frame UpdateEvent allows (no look-ahead scheduling exists).
+ * - Custom-pattern hits fire on per-frame 16th-step crossings and carry that
+ *   same one-frame jitter, which at 105 BPM is 11-23% OF A STEP per hit
+ *   (see the LoopGridTransport header). In-Lens custom playback is an
+ *   approximate sketch; the exact rendition is the MIDI export.
  * - On every downbeat that applies changes, ALL active loops are restarted in
  *   the same frame, so the entire mix shares a single launch instant and any
  *   transport-vs-audio-clock drift accumulated since the last change is
@@ -33,8 +38,9 @@
  */
 
 import { LoopGridTransport } from "./LoopGridTransport"
-import { LoopGridModel, LOOPGRID_ROWS, LOOPGRID_COLS } from "./LoopGridModel"
-import { LoopGridExportEncoder } from "./LoopGridExportEncoder"
+import { LoopGridModel, LOOPGRID_ROWS, LOOPGRID_COLS, CUSTOM_COL, CUSTOM_ROWS } from "./LoopGridModel"
+import { LoopGridExportEncoder, CustomPatternExports } from "./LoopGridExportEncoder"
+import { LoopGridCustomPattern, CUSTOM_LANES, CUSTOM_STEPS } from "./LoopGridCustomPattern"
 import { LoopGridUI, CellState } from "./LoopGridUI"
 import { LoopGridExportPanelUI } from "./LoopGridExportPanelUI"
 
@@ -94,6 +100,18 @@ const LOOP_TRACKS: AudioTrackAsset[][] = [
 ]
 const SFX_ARM = requireAsset("../GeneratedSFX/CellArm.wav") as AudioTrackAsset
 const SFX_STOP = requireAsset("../GeneratedSFX/CellStop.wav") as AudioTrackAsset
+
+// Custom-pattern one-shots, lane order Kick/Snare/Hat/Clap/Shaker (the
+// cross-file lane contract — see LoopGridCustomPattern.ts).
+const HIT_TRACKS: AudioTrackAsset[] = [
+  requireAsset("../GeneratedSFX/Hit_Kick.wav") as AudioTrackAsset,
+  requireAsset("../GeneratedSFX/Hit_Snare.wav") as AudioTrackAsset,
+  requireAsset("../GeneratedSFX/Hit_Hat.wav") as AudioTrackAsset,
+  requireAsset("../GeneratedSFX/Hit_Clap.wav") as AudioTrackAsset,
+  requireAsset("../GeneratedSFX/Hit_Shaker.wav") as AudioTrackAsset,
+]
+/** Per-lane trim (x masterVolume) so sketch hits sit with the mixed loops. */
+const LANE_VOLUMES = [0.9, 0.85, 0.7, 0.8, 0.6]
 
 /** Everything is rendered in this key/tempo — display + export metadata. */
 const BPM = 105
@@ -168,6 +186,20 @@ export class LoopGridMain extends BaseScriptComponent {
   private stopAudio: AudioComponent | null = null
   private lastTransportText = ""
 
+  /**
+   * Custom-pattern one-shot players: 2 per lane, round-robin (10 total), so a
+   * hit can ring out while the next hit on the same lane starts — a 16th-note
+   * hat line would otherwise cut its own tails. Tracks are assigned at build
+   * (all 5 one-shots total ~65 KB of PCM — nothing like the 24 MB loop set
+   * that forced the loop pool's assign-at-arm discipline). Deliberately NOT
+   * one component per step or per cell: that per-cell design is what crashed
+   * the editor.
+   */
+  private laneSlots: AudioComponent[][] = []
+  private laneToggle: number[] = []
+  /** Custom pattern per row; null for rows without a Custom cell. */
+  private customPatterns: (LoopGridCustomPattern | null)[] = []
+
   onAwake(): void {
     // onAwake calls createEvent() ONLY — all property writes and subscriptions
     // happen in the OnStartEvent handler (platform rule: SIK subscriptions and
@@ -179,6 +211,10 @@ export class LoopGridMain extends BaseScriptComponent {
   private onStart(): void {
     // Canvas at the root: hierarchy order IS render order for the whole UI.
     this.sceneObject.createComponent("Component.Canvas")
+
+    for (let r = 0; r < LOOPGRID_ROWS; r++) {
+      this.customPatterns.push(CUSTOM_ROWS.indexOf(r) >= 0 ? new LoopGridCustomPattern() : null)
+    }
 
     this.buildAudio()
 
@@ -195,15 +231,19 @@ export class LoopGridMain extends BaseScriptComponent {
     this.gridUI.onSceneTap.add((col) => this.handleSceneTap(col))
     this.gridUI.onStopAll.add(() => this.handleStopAll())
     this.gridUI.onExport.add(() => this.handleExport())
+    this.gridUI.onStepToggle.add(({ row, lane, step }) => this.handleStepToggle(row, lane, step))
+    this.gridUI.onPatternClear.add((row) => this.handlePatternClear(row))
 
     this.updateTransportText()
   }
 
-  /** Create the 12 AudioComponents (5 rows x 2 pooled slots + 2 tap SFX).
+  /** Create the 22 AudioComponents (5 rows x 2 pooled loop slots + 5 lanes x
+   *  2 one-shot slots + 2 tap SFX).
    *  playbackMode is script-only and defaults to LowPower on Specs (tens of ms
    *  latency) — it MUST be LowLatency here and MUST be set inside this
    *  OnStartEvent handler, never in onAwake. Loop slots start with NO
-   *  audioTrack; tracks are assigned at arm time (see prepPendingTracks). */
+   *  audioTrack; tracks are assigned at arm time (see prepPendingTracks).
+   *  One-shot lane slots DO get their track here — see the laneSlots comment. */
   private buildAudio(): void {
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
       const slots: AudioComponent[] = []
@@ -231,6 +271,22 @@ export class LoopGridMain extends BaseScriptComponent {
     }
     this.armAudio = mk("Audio_SfxArm", SFX_ARM)
     this.stopAudio = mk("Audio_SfxStop", SFX_STOP)
+
+    // Custom-pattern lanes: 2 round-robin slots per lane (see laneSlots).
+    for (let l = 0; l < CUSTOM_LANES; l++) {
+      const slots: AudioComponent[] = []
+      for (let s = 0; s < 2; s++) {
+        const so = global.scene.createSceneObject("Audio_Lane" + l + "S" + s)
+        so.setParent(this.sceneObject)
+        const audio = so.createComponent("Component.AudioComponent") as AudioComponent
+        audio.audioTrack = HIT_TRACKS[l]
+        audio.playbackMode = Audio.PlaybackMode.LowLatency
+        audio.volume = LANE_VOLUMES[l] * this.masterVolume
+        slots.push(audio)
+      }
+      this.laneSlots.push(slots)
+      this.laneToggle.push(0)
+    }
   }
 
   private onUpdate(): void {
@@ -239,9 +295,46 @@ export class LoopGridMain extends BaseScriptComponent {
       if (this.transport.advance(dt)) {
         this.onDownbeat()
       }
+      // Drain step crossings EVERY frame (takeSteps clears the queue) and
+      // trigger custom-pattern hits. Timing honesty: each hit lands on the
+      // first frame at/after its 16th boundary — 11-23% of a step late at
+      // 105 BPM (see LoopGridTransport header). The sketch is approximate by
+      // platform design; the MIDI export is the exact rendition.
+      const steps = this.transport.takeSteps()
+      if (steps.length > 0) this.playPatternSteps(steps)
     }
     this.gridUI.tick(dt)
     this.updateTransportText()
+  }
+
+  /** Fire one-shots for every crossed 16th step. The 16-step pattern is ONE
+   *  bar; the cycle is 2 bars, so cycle step index mod 16 plays it twice per
+   *  cycle. When Drums AND Perc custom patterns are both live, a lane both
+   *  hit on the same step triggers ONCE (union) — two identical one-shots in
+   *  the same frame would only comb-filter, not add. */
+  private playPatternSteps(cycleSteps: number[]): void {
+    for (const si of cycleSteps) {
+      const step = si % CUSTOM_STEPS
+      for (let lane = 0; lane < CUSTOM_LANES; lane++) {
+        let hit = false
+        for (const r of CUSTOM_ROWS) {
+          const p = this.customPatterns[r]
+          if (p && this.model.active[r] === CUSTOM_COL && p.get(lane, step)) {
+            hit = true
+            break
+          }
+        }
+        if (hit) this.hitLane(lane)
+      }
+    }
+  }
+
+  /** Round-robin between the lane's two slots so back-to-back hits overlap
+   *  instead of cutting each other's tails. */
+  private hitLane(lane: number): void {
+    const s = this.laneToggle[lane]
+    this.laneToggle[lane] = 1 - s
+    this.laneSlots[lane][s].play(1)
   }
 
   /** A loop boundary was crossed (or the very first launch happened). */
@@ -255,6 +348,11 @@ export class LoopGridMain extends BaseScriptComponent {
         if (prev) prev.stop(false)
         const col = this.model.active[r]
         if (col < 0) {
+          this.playingAudio[r] = null
+          this.playingSlotIdx[r] = -1
+        } else if (col === CUSTOM_COL) {
+          // Custom pattern: no loop WAV — hits fire from step crossings in
+          // playPatternSteps. The row holds no loop slot while custom plays.
           this.playingAudio[r] = null
           this.playingSlotIdx[r] = -1
         } else {
@@ -301,6 +399,8 @@ export class LoopGridMain extends BaseScriptComponent {
    */
   private prepPendingTracks(): void {
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
+      // A pending CUSTOM cell needs no loop-slot prep (one-shot lane slots
+      // hold their tracks permanently), so only columns 0..7 are scanned.
       for (let c = 0; c < LOOPGRID_COLS; c++) {
         if (!this.model.isPendingLaunch(r, c)) continue
         if (this.slotCols[r].indexOf(c) < 0) {
@@ -316,9 +416,33 @@ export class LoopGridMain extends BaseScriptComponent {
   private handleCellTap(row: number, col: number): void {
     const action = this.model.tapCell(row, col)
     this.playTapSfx(action)
+    if (col === CUSTOM_COL) {
+      // A Custom cell arms like any cell AND opens its row's step editor so
+      // the user can sketch while it waits for (or rides) the downbeat.
+      const p = this.customPatterns[row]
+      if (p) this.gridUI.openPatternEditor(row, (lane, step) => p.get(lane, step))
+    }
     this.prepPendingTracks()
     this.ensureStarted()
     this.refreshCellVisuals()
+  }
+
+  /** Editor step toggled. Visual FIRST (the step must light the instant it is
+   *  toggled — that is what sells the interaction on camera), audition after:
+   *  a newly-ON step plays its lane's one-shot as immediate feedback. */
+  private handleStepToggle(row: number, lane: number, step: number): void {
+    const p = this.customPatterns[row]
+    if (!p) return
+    const on = p.toggle(lane, step)
+    this.gridUI.setEditorStep(lane, step, on)
+    if (on) this.hitLane(lane)
+  }
+
+  private handlePatternClear(row: number): void {
+    const p = this.customPatterns[row]
+    if (!p) return
+    p.clear()
+    this.gridUI.refreshEditorSteps((lane, step) => p.get(lane, step))
   }
 
   private handleSceneTap(col: number): void {
@@ -337,7 +461,16 @@ export class LoopGridMain extends BaseScriptComponent {
 
   private handleExport(): void {
     const lastBar = this.transport.cycleIndex * 2 + (this.transport.running ? 2 : 0)
-    const code = this.encoder.encode(this.model.timeline, BPM, KEY_NAME, lastBar)
+    // Patterns are captured at export time (live-edit semantics — see the
+    // encoder's format doc). The encoder only emits letters whose D9/P9
+    // actually appears in the timeline.
+    const patterns: CustomPatternExports = {}
+    const dp = this.customPatterns[0]
+    if (dp) patterns.D = dp.pack()
+    const pp = this.customPatterns[4]
+    if (pp) patterns.P = pp.pack()
+    const code = this.encoder.encode(this.model.timeline, BPM, KEY_NAME, lastBar, patterns)
+    this.gridUI.closePatternEditor()
     this.exportUI.showExport(code)
   }
 
@@ -358,7 +491,9 @@ export class LoopGridMain extends BaseScriptComponent {
 
   private refreshCellVisuals(): void {
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
-      for (let c = 0; c < LOOPGRID_COLS; c++) {
+      // Custom rows have one extra cell at CUSTOM_COL — same state logic.
+      const cols = CUSTOM_ROWS.indexOf(r) >= 0 ? LOOPGRID_COLS + 1 : LOOPGRID_COLS
+      for (let c = 0; c < cols; c++) {
         let state: CellState = "idle"
         if (this.model.isPendingLaunch(r, c)) {
           state = "armed"

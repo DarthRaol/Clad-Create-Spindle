@@ -4,8 +4,9 @@
  *
  * Plain exported class (NOT a @component — the single controller LoopGridMain
  * owns the component lifecycle per the project architecture rule). Composes
- * SpectaclesUIKit primitives; the ONLY raw visuals are the 40 grid cells,
- * which fall under the documented high-cardinality grid-cell carve-out.
+ * SpectaclesUIKit primitives; the ONLY raw visuals are the 42 grid cells
+ * (5x8 loops + 2 Custom) and the 80 pattern-editor step toggles, both under
+ * the documented high-cardinality grid-cell carve-out.
  *
  * Owns: building the UI subtree under a host SceneObject, cell visual state,
  * and translating taps into typed events for the controller.
@@ -32,13 +33,15 @@ import { Interactable } from "SpectaclesInteractionKit.lspkg/Components/Interact
 import { InteractorTriggerType, TargetingMode } from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 
-import { LOOPGRID_ROWS, LOOPGRID_COLS } from "./LoopGridModel"
+import { LOOPGRID_ROWS, LOOPGRID_COLS, CUSTOM_COL, CUSTOM_ROWS } from "./LoopGridModel"
+import { CUSTOM_LANES, CUSTOM_STEPS, CUSTOM_LANE_NAMES } from "./LoopGridCustomPattern"
 
 // ── Assets (fixed internal references — not Inspector-swappable) ─────────────
 const ICON_MUSIC_NOTE = requireAsset("../Icons/music_note.png") as Texture
 const ICON_PLAY = requireAsset("../Icons/play_arrow.png") as Texture
 const ICON_STOP = requireAsset("../Icons/stop.png") as Texture
 const ICON_EXPORT = requireAsset("../Icons/ios_share.png") as Texture
+const ICON_CLOSE = requireAsset("../Icons/close.png") as Texture
 const imageMaterial = requireAsset("../Materials/ImageMaterial.mat") as Material
 const cellMaterial = requireAsset("../Materials/CellMaterial.mat") as Material
 
@@ -146,17 +149,58 @@ interface CellVisual {
   hovered: boolean
 }
 
+interface StepVisual {
+  mat: Material
+  on: boolean
+  hovered: boolean
+  /** Steps 0/4/8/12 (the beats) get a brighter off color for readability. */
+  onBeat: boolean
+}
+
+// ── Pattern editor geometry (own overlay panel, parked when hidden) ──────────
+const EDITOR_W = 56
+const EDITOR_H = 22
+const STEP_W = 2.6
+const STEP_H = 2.2
+const STEP_GAP_X = 0.35
+const STEP_GAP_Y = 0.42
+const STEP_LEFT_X = -20.4 // center X of step 0
+const STEP_TOP_Y = 4.6 // center Y of lane 0
+const EDITOR_LABEL_X = -24.6
+const EDITOR_TITLE_Y = 8.2
+const EDITOR_BTN_Y = -9.0
+/** Visible: centered over the grid, nearer the camera than the grid panel and
+ *  the export panel (z=4) never shows at the same time — export closes it. */
+const EDITOR_SHOWN_POS = new vec3(0, 2, 5)
+const EDITOR_HIDDEN_POS = new vec3(0, 2, -3000)
+
+function stepX(step: number): number {
+  return STEP_LEFT_X + step * (STEP_W + STEP_GAP_X)
+}
+function stepY(lane: number): number {
+  return STEP_TOP_Y - lane * (STEP_H + STEP_GAP_Y)
+}
+
 export class LoopGridUI {
   // ── UI -> controller events ────────────────────────────────────────────────
   readonly onCellTap = new Event<{ row: number; col: number }>()
   readonly onSceneTap = new Event<number>()
   readonly onStopAll = new Event<void>()
   readonly onExport = new Event<void>()
+  /** Pattern-editor step toggled. row = the row whose editor is open. */
+  readonly onStepToggle = new Event<{ row: number; lane: number; step: number }>()
+  readonly onPatternClear = new Event<number>()
 
   private cells: CellVisual[][] = []
   private transportText: Text | null = null
   private pulseTime = 0
   private cfg!: LoopGridUIConfig
+
+  // Pattern editor state
+  private editorRoot: SceneObject | null = null
+  private editorTitle: Text | null = null
+  private editorSteps: StepVisual[][] = [] // [lane][step]
+  private editorRow = -1
 
   /** Build the whole surface under `host`. Call from an OnStartEvent handler. */
   build(host: SceneObject, cfg: LoopGridUIConfig): void {
@@ -164,6 +208,7 @@ export class LoopGridUI {
     this.buildHeader(host)
     this.buildGridPanel(host)
     this.buildControlRow(host)
+    this.buildPatternEditor(host)
   }
 
   // ── controller -> UI API ──────────────────────────────────────────────────
@@ -181,7 +226,8 @@ export class LoopGridUI {
   tick(dt: number): void {
     this.pulseTime += dt
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
-      for (let c = 0; c < LOOPGRID_COLS; c++) {
+      // Custom rows carry one extra cell — iterate the actual row length.
+      for (let c = 0; c < this.cells[r].length; c++) {
         const cv = this.cells[r][c]
         if (cv.state === "armed" || cv.state === "stopArmed") this.applyCellColor(cv)
       }
@@ -266,7 +312,9 @@ export class LoopGridUI {
   private buildGridPanel(host: SceneObject): void {
     const panel = this.obj(host, "GridPanel", new vec3(0, GRIDPANEL_Y, 0))
     const plate = panel.createComponent(BackPlate.getTypeName()) as BackPlate
-    plate.size = new vec2(50, 27)
+    // 58 wide (was 50): the 9th Custom column on rows 0/4 sits at
+    // gridCellX(8) = 26.3, so the plate must reach past x = 28.6.
+    plate.size = new vec2(58, 27)
     disableBackPlateInteractionPlane(plate)
 
     const content = this.obj(panel, "GridContent", new vec3(0, 0, CONTENT_Z))
@@ -300,12 +348,17 @@ export class LoopGridUI {
       this.addStandaloneText(so, this.cfg.rowLabels[r] || "?", "Caption", 6.5)
     }
 
-    // The 40 cells
+    // The 40 loop cells + 2 Custom cells (rows 0 and 4, column CUSTOM_COL).
+    // A Custom cell is per-row and belongs to NO scene column — there is no
+    // 9th scene button, and armScene never reaches it (see LoopGridModel).
     const cellMesh = this.buildCellMesh()
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
       const rowArr: CellVisual[] = []
       for (let c = 0; c < LOOPGRID_COLS; c++) {
         rowArr.push(this.makeCell(content, cellMesh, r, c))
+      }
+      if (CUSTOM_ROWS.indexOf(r) >= 0) {
+        rowArr.push(this.makeCell(content, cellMesh, r, CUSTOM_COL, "Custom"))
       }
       this.cells.push(rowArr)
     }
@@ -394,12 +447,16 @@ export class LoopGridUI {
     })
   }
 
-  // per-tile factory — Hard Rule 3 grid-cell carve-out (N = 40)
-  // Raw RenderMeshVisual + collider + Interactable per cell: 40 UIKit Buttons
+  // per-tile factory — Hard Rule 3 grid-cell carve-out (N = 42)
+  // Raw RenderMeshVisual + collider + Interactable per cell: 42 UIKit Buttons
   // would be the instantiation bottleneck this carve-out exists for. The grid's
   // backing panel and every surrounding control stay UIKit.
-  private makeCell(parent: SceneObject, mesh: RenderMesh, row: number, col: number): CellVisual {
+  private makeCell(parent: SceneObject, mesh: RenderMesh, row: number, col: number, label?: string): CellVisual {
     const so = this.obj(parent, "Cell_R" + row + "C" + col, new vec3(gridCellX(col), gridCellY(row), LAYOUT_Z_LIFT))
+    if (label !== undefined) {
+      const labelSo = this.obj(so, "CellLabel", new vec3(0, 0, 0.08))
+      this.addStandaloneText(labelSo, label, "Caption", CELL_W)
+    }
 
     const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
     rmv.mesh = mesh
@@ -474,6 +531,186 @@ export class LoopGridUI {
     this.flexChild(rowHost, { w: 12, h: 3 }, (so) => {
       this.addContentButton(so, "Export", ICON_EXPORT, 12, 3, () => this.onExport.invoke(), false)
     })
+  }
+
+  // ── pattern editor (16 steps x 5 lanes) ───────────────────────────────────
+
+  /**
+   * The step editor overlay. Hidden = parked far behind the camera (same
+   * rationale as LoopGridExportPanelUI: disabling a freshly-built FlexLayout
+   * subtree freezes layout, and colliders travel with the transform, so a
+   * parked panel has zero interactable surface). One editor is shared by the
+   * two Custom cells; openPatternEditor targets it at a row.
+   *
+   * UI copy rule (from the transport's honest-timing header): playback in the
+   * Lens is an approximate sketch — one-frame jitter is 11-23% of a 16th step
+   * at 105 BPM — so the caption says "sketch" and points at the GarageBand
+   * export for exact timing. Never word this panel as tight/quantized.
+   */
+  private buildPatternEditor(host: SceneObject): void {
+    const panel = this.obj(host, "PatternEditor", EDITOR_HIDDEN_POS)
+    this.editorRoot = panel
+    const plate = panel.createComponent(BackPlate.getTypeName()) as BackPlate
+    plate.size = new vec2(EDITOR_W, EDITOR_H)
+    disableBackPlateInteractionPlane(plate)
+
+    const content = this.obj(panel, "EditorContent", new vec3(0, 0, CONTENT_Z))
+
+    // Title (set per-row on open) + the honest-timing caption
+    const titleSo = this.obj(content, "EditorTitle", new vec3(0, EDITOR_TITLE_Y, 0))
+    this.editorTitle = this.addStandaloneText(titleSo, "Custom Pattern", "Headline2", EDITOR_W - 6)
+    const capSo = this.obj(content, "EditorCaption", new vec3(0, EDITOR_TITLE_Y - 1.9, 0))
+    this.addStandaloneText(
+      capSo,
+      "Sketch — Lens playback timing is approximate. Export to GarageBand for exact timing.",
+      "Caption",
+      EDITOR_W - 6
+    )
+
+    // Lane labels (computed placement — aligned to the step rows)
+    for (let l = 0; l < CUSTOM_LANES; l++) {
+      const so = this.obj(content, "LaneLabel" + l, new vec3(EDITOR_LABEL_X, stepY(l), 0))
+      this.addStandaloneText(so, CUSTOM_LANE_NAMES[l], "Caption", 7)
+    }
+
+    // per-toggle factory — Hard Rule 3 grid-cell carve-out (N = 80)
+    // Raw RenderMeshVisual + collider + Interactable per step toggle: 80 UIKit
+    // Buttons would be the instantiation bottleneck this carve-out exists for.
+    // The editor's backing panel, title, and Clear/Close buttons stay UIKit.
+    const stepMesh = this.buildStepMesh()
+    for (let l = 0; l < CUSTOM_LANES; l++) {
+      const laneArr: StepVisual[] = []
+      for (let s = 0; s < CUSTOM_STEPS; s++) {
+        laneArr.push(this.makeStepToggle(content, stepMesh, l, s))
+      }
+      this.editorSteps.push(laneArr)
+    }
+
+    // Clear rewrites the whole pattern — destructive, so travel-guarded (same
+    // rule as Stop All). Close only parks the panel — harmless if swept, so
+    // plain onTriggerUp (same rule as Export).
+    const clearSo = this.obj(content, "EditorClear", new vec3(-5.5, EDITOR_BTN_Y, 0))
+    this.addContentButton(clearSo, "Clear", ICON_STOP, 9, 2.8, () => {
+      if (this.editorRow >= 0) this.onPatternClear.invoke(this.editorRow)
+    }, true)
+    const closeSo = this.obj(content, "EditorClose", new vec3(5.5, EDITOR_BTN_Y, 0))
+    this.addContentButton(closeSo, "Close", ICON_CLOSE, 9, 2.8, () => this.closePatternEditor(), false)
+  }
+
+  /**
+   * One step toggle. Same travel guard as the 42 cells (guardedTap), and the
+   * SAME targeting restriction as the guarded UIKit buttons: Direct|Indirect,
+   * Poke removed — without this, a hand swept across the 16x5 grid would
+   * toggle every step it crosses (the exact bug already fixed for cells).
+   * The visual flips INSTANTLY on the guarded tap (before the controller is
+   * even notified) — the lit step is the feedback that sells the interaction;
+   * audio (the audition hit) follows from the controller.
+   */
+  private makeStepToggle(parent: SceneObject, mesh: RenderMesh, lane: number, step: number): StepVisual {
+    const so = this.obj(parent, "Step_L" + lane + "S" + step, new vec3(stepX(step), stepY(lane), LAYOUT_Z_LIFT))
+
+    const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+    rmv.mesh = mesh
+    const mat = cellMaterial.clone()
+    rmv.clearMaterials()
+    rmv.addMaterial(mat)
+
+    const collider = so.createComponent("Physics.ColliderComponent") as ColliderComponent
+    const shape = Shape.createBoxShape()
+    shape.size = new vec3(STEP_W, STEP_H, 1)
+    collider.shape = shape
+    collider.fitVisual = false
+
+    const interactable = so.createComponent(Interactable.getTypeName()) as Interactable
+    interactable.targetingMode = TargetingMode.Direct | TargetingMode.Indirect
+
+    const sv: StepVisual = { mat, on: false, hovered: false, onBeat: step % 4 === 0 }
+
+    this.guardedTap(interactable, "L" + lane + "S" + step, () => {
+      // Optimistic flip: light the step NOW. The controller's model toggle
+      // lands in this same synchronous call and re-confirms via
+      // setEditorStep — same value, no flicker.
+      sv.on = !sv.on
+      this.applyStepColor(sv)
+      if (this.editorRow >= 0) this.onStepToggle.invoke({ row: this.editorRow, lane, step })
+    }, (h) => {
+      sv.hovered = h
+      this.applyStepColor(sv)
+    })
+
+    this.applyStepColor(sv)
+    return sv
+  }
+
+  private applyStepColor(sv: StepVisual): void {
+    // ON = the armed orange (distinct from the cyan a playing CELL uses);
+    // OFF is the idle teal, with beat columns (steps 0/4/8/12) brightened so
+    // the bar reads at a glance.
+    const base = sv.on
+      ? this.cfg.armedColor
+      : (this.cfg.idleColor.uniformScale(sv.onBeat ? 1.5 : 0.85) as vec4)
+    const k = sv.hovered ? 1.3 : 1.0
+    sv.mat.mainPass.baseColor = new vec4(
+      Math.min(1, base.x * k),
+      Math.min(1, base.y * k),
+      Math.min(1, base.z * k),
+      1
+    )
+  }
+
+  /** Shared step-toggle quad (STEP_W x STEP_H — smaller than the cell quad). */
+  private buildStepMesh(): RenderMesh {
+    const mb = new MeshBuilder([
+      { name: "position", components: 3 },
+      { name: "normal", components: 3 },
+      { name: "texture0", components: 2 },
+    ])
+    mb.topology = MeshTopology.Triangles
+    mb.indexType = MeshIndexType.UInt16
+    const hw = STEP_W / 2
+    const hh = STEP_H / 2
+    mb.appendVerticesInterleaved([
+      -hw, -hh, 0, 0, 0, 1, 0, 0,
+      hw, -hh, 0, 0, 0, 1, 1, 0,
+      hw, hh, 0, 0, 0, 1, 1, 1,
+      -hw, hh, 0, 0, 0, 1, 0, 1,
+    ])
+    mb.appendIndices([0, 1, 2, 0, 2, 3])
+    mb.updateMesh()
+    return mb.getMesh()
+  }
+
+  // ── controller -> editor API ──────────────────────────────────────────────
+
+  /** Show the editor for `row`, painting steps from `get(lane, step)`. */
+  openPatternEditor(row: number, get: (lane: number, step: number) => boolean): void {
+    if (!this.editorRoot) return
+    this.editorRow = row
+    if (this.editorTitle) {
+      this.editorTitle.text = row === 0 ? "Custom Drums" : "Custom Perc"
+    }
+    this.refreshEditorSteps(get)
+    this.editorRoot.getTransform().setLocalPosition(EDITOR_SHOWN_POS)
+  }
+
+  closePatternEditor(): void {
+    if (!this.editorRoot) return
+    this.editorRoot.getTransform().setLocalPosition(EDITOR_HIDDEN_POS)
+    this.editorRow = -1
+  }
+
+  setEditorStep(lane: number, step: number, on: boolean): void {
+    const sv = this.editorSteps[lane][step]
+    sv.on = on
+    this.applyStepColor(sv)
+  }
+
+  refreshEditorSteps(get: (lane: number, step: number) => boolean): void {
+    for (let l = 0; l < CUSTOM_LANES; l++) {
+      for (let s = 0; s < CUSTOM_STEPS; s++) {
+        this.setEditorStep(l, s, get(l, s))
+      }
+    }
   }
 
   // ── shared composition helpers (from /specs-build-ui references/helpers.md) ──

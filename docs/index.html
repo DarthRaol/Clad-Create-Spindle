@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoopGrid MIDI Export</title>
+<!--
+  GENERATED FILE (docs/index.html) — do not edit directly.
+  Template: tools/page-template.html. The LG1 parser and MIDI writer are
+  spliced VERBATIM from tools/loopgrid-midi.js, and the loop table from
+  tools/loops.json, by:  node tools/build-page.js
+  Drift guard (byte-compares page output against the Node tool):
+                        node tools/build-page.test.js
+-->
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1b1a; --muted: #6b6862;
+    --line: #dedad2; --accent: #7a4dd8; --accent-ink: #ffffff;
+    --warn-bg: #fff4dc; --warn-line: #e0b34c; --ok: #2c7a4b; --err: #b3372f;
+    --code-bg: #efece6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161514; --panel: #201f1d; --ink: #ece9e4; --muted: #9b968e;
+      --line: #38352f; --accent: #9d79ec; --accent-ink: #17111f;
+      --warn-bg: #2e2718; --warn-line: #9c7c2f; --ok: #6cc793; --err: #e07a72;
+      --code-bg: #2a2825;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  textarea {
+    width: 100%; min-height: 72px; resize: vertical; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--code-bg); color: var(--ink);
+    font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 10px;
+  }
+  button {
+    font: inherit; border: 0; border-radius: 8px; padding: 10px 18px;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 600;
+  }
+  button.secondary { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .error { color: var(--err); font-weight: 600; margin-top: 10px; }
+  .hidden { display: none; }
+  table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  td, th { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .checklist {
+    background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .checklist h2 { margin-bottom: 6px; }
+  .checklist ul { margin: 8px 0 0; padding-left: 22px; }
+  .checklist li { margin-bottom: 6px; }
+  .checklist strong { font-variant-numeric: tabular-nums; }
+  ol.steps { margin: 8px 0 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 8px; }
+  .dl-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .hint { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; }
+  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>LoopGrid → GarageBand</h1>
+  <p class="sub">Paste the export code from the Lens panel to turn your session into MIDI.</p>
+
+  <section>
+    <h2>Export code</h2>
+    <textarea id="code" placeholder="LG1|105|Am|0:D1,B1;4:K3|END:8|…" spellcheck="false"></textarea>
+    <div class="dl-row"><button id="decode">Decode</button></div>
+    <div id="parseError" class="error hidden"></div>
+  </section>
+
+  <div id="result" class="hidden">
+    <section>
+      <h2>Your session</h2>
+      <table id="summary"></table>
+    </section>
+
+    <div class="checklist">
+      <h2>⚠️ Before importing — set these in your GarageBand song first</h2>
+      <p style="margin:6px 0 0">GarageBand imports MIDI at the <em>song's</em> existing
+      tempo and ignores the file's, and a fixed-length song section truncates the import.</p>
+      <ul>
+        <li>Tempo: <strong id="ckTempo">105</strong> (song settings ⚙ → Tempo)</li>
+        <li>Key: <strong id="ckKey">A minor</strong> (song settings ⚙ → Key)</li>
+        <li>Song section: <strong>Automatic</strong> (tap <code>+</code> at the top-right of
+            Tracks view → Section A → Automatic) — otherwise the import is cut off
+            at the section boundary</li>
+      </ul>
+    </div>
+
+    <section>
+      <h2>How to import</h2>
+      <p class="muted" style="margin:0 0 4px">There is no “Open in GarageBand” for
+      .mid files — import happens inside a song:</p>
+      <ol class="steps">
+        <li>Create a song and switch to <strong>Tracks view</strong> (the mixer-style icon).</li>
+        <li>Tap the <strong>Loop Browser</strong> (loop icon, top right) → <strong>Files</strong> tab
+            → <em>Browse items from the Files app</em> → locate the downloaded .mid.</li>
+        <li><strong>Touch and hold</strong> the file, then <strong>drag it into the tracks area</strong>
+            and release at bar 1.</li>
+        <li>Stems only: create a <strong>Drums</strong> track first and drop the Drums (and Perc)
+            stem directly <em>onto that track</em> so it lands on a drum kit.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Download</h2>
+      <div class="dl-row">
+        <button id="dlArrangement">Arrangement (1 file)</button>
+        <button id="dlStems" class="secondary">Stems (5 files)</button>
+      </div>
+      <p class="hint">The arrangement imports as one pitched Keyboard track per row —
+      quickest overview, but drums won't sound like drums. Stems are single-track
+      files, so the Drums and Perc stems can be dropped onto a Drums track and land
+      on a real kit.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+'use strict';
+/* BEGIN LOOPGRID LIB — tools/loopgrid-midi.js spliced verbatim by build-page.js */
+const LoopGridMidi = (function () {
+class Buffer extends Uint8Array {
+  static alloc(n) { return new Buffer(n); }
+  static from(src) {
+    if (typeof src === "string") {
+      const b = new Buffer(src.length);
+      for (let i = 0; i < src.length; i++) b[i] = src.charCodeAt(i) & 0xff;
+      return b;
+    }
+    const b = new Buffer(src.length); b.set(src); return b;
+  }
+  static concat(list) {
+    const out = new Buffer(list.reduce((s, c) => s + c.length, 0));
+    let o = 0;
+    for (const c of list) { out.set(c, o); o += c.length; }
+    return out;
+  }
+  write(s, off) { off = off || 0; for (let i = 0; i < s.length; i++) this[off + i] = s.charCodeAt(i) & 0xff; }
+  writeUInt32BE(v, off) { off = off || 0; this[off] = (v >>> 24) & 0xff; this[off + 1] = (v >>> 16) & 0xff; this[off + 2] = (v >>> 8) & 0xff; this[off + 3] = v & 0xff; }
+  writeUInt16BE(v, off) { off = off || 0; this[off] = (v >>> 8) & 0xff; this[off + 1] = v & 0xff; }
+}
+// require() stub: fs/path are only touched by loadLoops()/main(), which
+// the page never calls; require.main is undefined so main() never runs.
+const require = function () { return {}; };
+const module = { exports: {} };
+const process = undefined;
+/* ---- tools/loopgrid-midi.js, verbatim (shebang commented) ---- */
+// (shebang stripped for the browser by build-page.js)
+// loopgrid-midi.js — LoopGrid companion tool: LG1 export code -> Standard MIDI
+// File for GarageBand. Dependency-free (Node builtins only).
+//
+// The Lens shows the LG1 code on its export panel (see
+// Assets/Scripts/LoopGridExportEncoder.ts — the format is defined there and
+// mirrored here, checksum included). Note content comes from tools/loops.json,
+// which is emitted by the SAME generator run that renders the loop WAVs
+// (tempAssetGen/gen_music_loopgrid.js), so this MIDI can never drift from the
+// audio the user actually heard.
+//
+// Usage:
+//   node tools/loopgrid-midi.js "LG1|105|Am|0:D1,B1|END:8|PAT:-|<c>" out.mid
+//   node tools/loopgrid-midi.js --stems "LG1|...|<c>" out.mid
+//
+// Custom patterns: cell digit 9 (D9/P9 only) plays the row's user-authored
+// 16-step x 5-lane pattern, carried in the PAT segment as 20 hex chars per
+// row (see unpackPattern). Rendered on channel 10 with GM notes
+// Kick 36 / Snare 38 / Hat 42 / Clap 39 / Shaker 70 — the 1-bar pattern
+// repeats every bar of its segment.
+//
+// Default (arrangement) output: format-1 SMF, 480 ticks/quarter.
+//   Track 0: tempo + 4/4 + A-minor key signature.
+//   Then one track per row that actually plays (Drums, Bass, Keys, Lead,
+//   Perc) — rows with zero notes are omitted entirely.
+//   Drums & Perc on channel 10 (index 9); Bass/Keys/Lead on channels 1-3.
+//
+// --stems output: one SINGLE-track format-0 file per playing row, named
+//   <out>-Drums.mid, <out>-Bass.mid, ... (rows with zero notes are skipped).
+//   GarageBand iOS turns every track of a multitrack import into a pitched
+//   Keyboard track; only a single-track file dropped onto a Drums track lands
+//   on a drum kit. Stems exist so the drum rows can be imported that way.
+//
+// BROWSER CONSTRAINT: tools/build-page.js splices this file VERBATIM into
+// docs/index.html (with a Buffer shim). Everything except loadLoops() and
+// main() must stay free of Node APIs beyond Buffer — no fs/path/process in
+// the parse/arrange/write functions. tools/build-page.test.js enforces that
+// the spliced page still produces byte-identical MIDI.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const TICKS_PER_QUARTER = 480;
+const BEATS_PER_BAR = 4;
+const LOOP_BARS = 2; // every LoopGrid loop is exactly 2 bars (8 beats)
+const ROW_LETTERS = ['D', 'B', 'K', 'L', 'P'];
+const ROW_NAMES = ['Drums', 'Bass', 'Keys', 'Lead', 'Perc'];
+// 0-based MIDI channels per row. GM percussion is channel 10 = index 9.
+const ROW_CHANNELS = [9, 0, 1, 2, 9];
+// GM programs (0-based) for the melodic rows; drum channels ignore program.
+const ROW_PROGRAMS = { 1: 33, 2: 4, 3: 11 }; // El.Bass(finger), E.Piano 1, Vibraphone
+
+// The generator's DRUM_MAP (build-music rhythm.js) is not GM-clean: `oh` is
+// rendered at MIDI 60 (so the hat voice picks its open variant) and `ride` at
+// 62. On a GM drum channel those are Hi Bongo / Mute Hi Conga — GarageBand
+// would play the wrong percussion. Remap to GM Open Hi-Hat (46) and Ride
+// Cymbal 1 (51). Every other drum pitch the generator uses
+// (36/37/38/39/41/42/45/49/50/70) is already GM-correct.
+const GM_DRUM_REMAP = { 60: 46, 62: 51 };
+const DRUM_ROWS = new Set([0, 4]); // Drums, Perc
+
+// User-authored custom patterns: column digit 9 on rows D and P. A pattern is
+// 16 steps of 16ths x 5 lanes = exactly ONE bar; the transport cycle is 2
+// bars, so it sounds twice per cycle — segments walk it bar by bar.
+// Lane order is the cross-file contract (LoopGridCustomPattern.ts):
+//   Kick / Snare / Hat / Clap / Shaker -> GM 36 / 38 / 42 / 39 / 70.
+const CUSTOM_COL = 9;
+const CUSTOM_LANES = 5;
+const CUSTOM_STEPS = 16;
+const CUSTOM_LANE_NOTES = [36, 38, 42, 39, 70];
+const CUSTOM_LANE_VELS = [112, 105, 96, 104, 90]; // patterns carry no velocity
+const CUSTOM_ROW_LETTERS = new Set(['D', 'P']);
+
+const BASE36 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+/** FNV-1a 32-bit of `body`, folded to one base-36 character. Mirror of
+ *  lg1Checksum in Assets/Scripts/LoopGridExportEncoder.ts — keep in lockstep. */
+function lg1Checksum(body) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < body.length; i++) {
+    h ^= body.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return BASE36[(h >>> 0) % 36];
+}
+
+/**
+ * Unpack a 20-hex-char custom pattern into [lane][step] booleans.
+ * Mirror of LoopGridCustomPattern.pack() in Assets/Scripts — 4 hex digits per
+ * lane, 16 bits each, step 0 is the MOST significant bit. Keep in lockstep.
+ */
+function unpackPattern(packed) {
+  if (!/^[0-9A-F]{20}$/.test(packed)) {
+    throw new Error('Bad custom pattern "' + packed + '" — expected 20 uppercase hex characters.');
+  }
+  const lanes = [];
+  for (let l = 0; l < CUSTOM_LANES; l++) {
+    const bits = parseInt(packed.substring(l * 4, l * 4 + 4), 16);
+    const lane = [];
+    for (let s = 0; s < CUSTOM_STEPS; s++) {
+      lane.push((bits & (1 << (CUSTOM_STEPS - 1 - s))) !== 0);
+    }
+    lanes.push(lane);
+  }
+  return lanes;
+}
+
+/**
+ * Parse and validate an LG1 code.
+ * Returns { bpm, key, timeline: [{bar, changes: [{row, col}]}], endBar,
+ * patterns: {D?, P?} (unpacked [lane][step] booleans) }.
+ * `col` is 1..8, 9 for the row's CUSTOM pattern (D/P only), or 0 for "row
+ * stops". Throws with a clear message on any malformed input — most
+ * importantly on a checksum mismatch, so a mis-copied character can never
+ * become a silently wrong arrangement.
+ */
+function parseLG1(code) {
+  const trimmed = String(code).trim();
+  const parts = trimmed.split('|');
+  if (parts.length !== 7) {
+    throw new Error(
+      'Not an LG1 code: expected 7 "|" segments (LG1|bpm|key|timeline|END:n|PAT:...|checksum), got ' +
+      parts.length + (parts.length === 6
+        ? '. This looks like a code from an older LoopGrid build without the PAT segment — re-export from the current Lens.'
+        : '')
+    );
+  }
+  const body = parts.slice(0, 6).join('|');
+  const expect = lg1Checksum(body);
+  if (parts[6] !== expect) {
+    throw new Error(
+      'LG1 checksum mismatch: code ends with "' + parts[6] + '" but its content hashes to "' +
+      expect + '". The code was mis-copied or corrupted — re-read it from the export panel.'
+    );
+  }
+  if (parts[0] !== 'LG1') throw new Error('Unknown format tag "' + parts[0] + '" (expected LG1)');
+  const bpm = Number(parts[1]);
+  if (!Number.isInteger(bpm) || bpm <= 0) throw new Error('Bad bpm segment "' + parts[1] + '"');
+  const key = parts[2];
+  const endMatch = /^END:(\d+)$/.exec(parts[4]);
+  if (!endMatch) throw new Error('Bad END segment "' + parts[4] + '"');
+  const endBar = Number(endMatch[1]);
+
+  const customUsed = new Set(); // row letters that launch col 9
+  const timeline = [];
+  if (parts[3] !== '-') {
+    for (const entry of parts[3].split(';')) {
+      const m = /^(\d+):([DBKLP][0-9](?:,[DBKLP][0-9])*)$/.exec(entry);
+      if (!m) throw new Error('Bad timeline entry "' + entry + '"');
+      const bar = Number(m[1]);
+      if (bar > endBar) throw new Error('Timeline bar ' + bar + ' is past END:' + endBar);
+      const changes = m[2].split(',').map((c) => {
+        const col = Number(c[1]);
+        if (col === CUSTOM_COL && !CUSTOM_ROW_LETTERS.has(c[0])) {
+          throw new Error(
+            'Bad cell code "' + c + '": only Drums (D9) and Perc (P9) have a custom pattern.'
+          );
+        }
+        if (col === CUSTOM_COL) customUsed.add(c[0]);
+        return { row: ROW_LETTERS.indexOf(c[0]), col };
+      });
+      timeline.push({ bar, changes });
+    }
+    timeline.sort((a, b) => a.bar - b.bar);
+  }
+
+  // PAT segment: "-" or comma-separated <letter>=<20 hex> entries. Strict
+  // cross-check both ways — a D9 with no pattern (or vice versa) is a
+  // malformed export, never something to guess around.
+  const patMatch = /^PAT:(.*)$/.exec(parts[5]);
+  if (!patMatch) throw new Error('Bad PAT segment "' + parts[5] + '"');
+  const patterns = {};
+  if (patMatch[1] !== '-') {
+    for (const entry of patMatch[1].split(',')) {
+      const pm = /^([DP])=([0-9A-F]{20})$/.exec(entry);
+      if (!pm) throw new Error('Bad PAT entry "' + entry + '" — expected D=<20 hex> or P=<20 hex>.');
+      if (patterns[pm[1]] !== undefined) throw new Error('Duplicate PAT entry for ' + pm[1]);
+      patterns[pm[1]] = unpackPattern(pm[2]);
+    }
+  }
+  for (const letter of customUsed) {
+    if (!patterns[letter]) {
+      throw new Error('Timeline launches ' + letter + '9 but the PAT segment has no ' + letter + ' pattern.');
+    }
+  }
+  for (const letter of Object.keys(patterns)) {
+    if (!customUsed.has(letter)) {
+      throw new Error('PAT segment carries a ' + letter + ' pattern but ' + letter + '9 never appears in the timeline.');
+    }
+  }
+
+  return { bpm, key, timeline, endBar, patterns };
+}
+
+/**
+ * Walk the timeline into per-row segments: for each row, the list of
+ * { startBar, endBar, col } stretches where one loop (col 1..8) is playing.
+ * A row's loop repeats every LOOP_BARS from its startBar until the row's next
+ * change, out to the END bar.
+ */
+function buildArrangement(timeline, endBar) {
+  const segments = [[], [], [], [], []];
+  const activeCol = [0, 0, 0, 0, 0]; // 0 = silent
+  const activeSince = [0, 0, 0, 0, 0];
+  for (const ev of timeline) {
+    for (const ch of ev.changes) {
+      const r = ch.row;
+      if (activeCol[r] > 0) {
+        segments[r].push({ startBar: activeSince[r], endBar: ev.bar, col: activeCol[r] });
+      }
+      activeCol[r] = ch.col;
+      activeSince[r] = ev.bar;
+    }
+  }
+  for (let r = 0; r < 5; r++) {
+    if (activeCol[r] > 0 && endBar > activeSince[r]) {
+      segments[r].push({ startBar: activeSince[r], endBar: endBar, col: activeCol[r] });
+    }
+  }
+  return segments;
+}
+
+/** Expand one CUSTOM segment (col 9) from an unpacked [lane][step] pattern.
+ *  The 16-step pattern is exactly one bar, so it repeats EVERY bar of the
+ *  segment (twice per 2-bar transport cycle). One 16th = TPQ/4 ticks. */
+function notesForCustomSegment(pattern, seg) {
+  const notes = [];
+  const stepTicks = TICKS_PER_QUARTER / 4; // 120
+  for (let bar = seg.startBar; bar < seg.endBar; bar += 1) {
+    for (let lane = 0; lane < CUSTOM_LANES; lane++) {
+      for (let s = 0; s < CUSTOM_STEPS; s++) {
+        if (!pattern[lane][s]) continue;
+        notes.push({
+          tick: bar * BEATS_PER_BAR * TICKS_PER_QUARTER + s * stepTicks,
+          durTicks: stepTicks,
+          pitch: CUSTOM_LANE_NOTES[lane],
+          velocity: CUSTOM_LANE_VELS[lane],
+        });
+      }
+    }
+  }
+  return notes;
+}
+
+/** Expand one segment into absolute-tick notes from the row's loop table. */
+function notesForSegment(loopEvents, seg, isDrumRow) {
+  const notes = [];
+  const segEndBeat = seg.endBar * BEATS_PER_BAR;
+  for (let bar = seg.startBar; bar < seg.endBar; bar += LOOP_BARS) {
+    for (const ev of loopEvents) {
+      const startBeat = bar * BEATS_PER_BAR + ev[0];
+      if (startBeat >= segEndBeat - 1e-9) continue; // clip odd-length segments
+      let pitch = ev[2];
+      if (isDrumRow && GM_DRUM_REMAP[pitch] !== undefined) pitch = GM_DRUM_REMAP[pitch];
+      notes.push({
+        tick: Math.round(startBeat * TICKS_PER_QUARTER),
+        durTicks: Math.max(1, Math.round(ev[1] * TICKS_PER_QUARTER)),
+        pitch: pitch,
+        velocity: Math.max(1, Math.min(127, ev[3])),
+      });
+    }
+  }
+  return notes;
+}
+
+// ── SMF writing ──────────────────────────────────────────────────────────────
+
+function vlq(value) {
+  const bytes = [value & 0x7f];
+  let v = value >> 7;
+  while (v > 0) {
+    bytes.unshift((v & 0x7f) | 0x80);
+    v >>= 7;
+  }
+  return bytes;
+}
+
+function trackChunk(eventBytes) {
+  const withEot = eventBytes.concat([0x00, 0xff, 0x2f, 0x00]);
+  const header = Buffer.from('MTrk');
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(withEot.length);
+  return Buffer.concat([header, len, Buffer.from(withEot)]);
+}
+
+/** Tempo + 4/4 + A-minor bytes, shared by the meta track and every stem. */
+function metaBytes(bpm) {
+  const usPerQuarter = Math.round(60000000 / bpm); // 105 BPM -> 571429
+  const b = [];
+  b.push(0x00, 0xff, 0x51, 0x03,
+    (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff);
+  b.push(0x00, 0xff, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08); // 4/4
+  b.push(0x00, 0xff, 0x59, 0x02, 0x00, 0x01); // 0 sharps/flats, minor -> A minor
+  return b;
+}
+
+/** Track name + optional program + interleaved note on/off bytes. */
+function noteBytes(name, channel, program, notes) {
+  const b = [];
+  const nameBytes = Array.from(Buffer.from(name, 'ascii'));
+  b.push(0x00, 0xff, 0x03, nameBytes.length, ...nameBytes);
+  if (program !== undefined) b.push(0x00, 0xc0 | channel, program);
+
+  // Interleave on/off events; at equal ticks, offs first so a repeated pitch
+  // re-strikes instead of being cut by the previous note's off.
+  const evs = [];
+  for (const n of notes) {
+    evs.push({ tick: n.tick, kind: 1, pitch: n.pitch, vel: n.velocity });
+    evs.push({ tick: n.tick + n.durTicks, kind: 0, pitch: n.pitch, vel: 0 });
+  }
+  evs.sort((a, b2) => a.tick - b2.tick || a.kind - b2.kind);
+  let lastTick = 0;
+  for (const e of evs) {
+    b.push(...vlq(e.tick - lastTick));
+    lastTick = e.tick;
+    b.push((e.kind === 1 ? 0x90 : 0x80) | channel, e.pitch, e.vel);
+  }
+  return b;
+}
+
+function smfHeader(format, ntrks) {
+  const header = Buffer.alloc(14);
+  header.write('MThd');
+  header.writeUInt32BE(6, 4);
+  header.writeUInt16BE(format, 8);
+  header.writeUInt16BE(ntrks, 10);
+  header.writeUInt16BE(TICKS_PER_QUARTER, 12);
+  return header;
+}
+
+/** Parse + validate the code and expand it to per-row note lists.
+ *  Returns { parsed, rowNotes } where rowNotes[r] is sorted, possibly []. */
+function arrangeNotes(code, loopsJson) {
+  const parsed = parseLG1(code);
+  if (loopsJson.bpm !== parsed.bpm) {
+    throw new Error(
+      'Code bpm ' + parsed.bpm + ' does not match loops.json bpm ' + loopsJson.bpm +
+      ' — code and loop table are from different builds.'
+    );
+  }
+  const segments = buildArrangement(parsed.timeline, parsed.endBar);
+  const rowNotes = [];
+  for (let r = 0; r < 5; r++) {
+    let notes = [];
+    for (const seg of segments[r]) {
+      if (seg.col === CUSTOM_COL) {
+        // parseLG1 guarantees the pattern exists for every D9/P9 launch.
+        notes = notes.concat(notesForCustomSegment(parsed.patterns[ROW_LETTERS[r]], seg));
+      } else {
+        notes = notes.concat(
+          notesForSegment(loopsJson.loops[r][seg.col - 1], seg, DRUM_ROWS.has(r))
+        );
+      }
+    }
+    notes.sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
+    rowNotes.push(notes);
+  }
+  return { parsed, rowNotes };
+}
+
+/** LG1 code + loops table -> combined-arrangement SMF bytes (Buffer).
+ *  Format 1: meta track, then one track per row that has notes — rows with
+ *  zero notes are omitted so GarageBand never creates empty Keyboard tracks. */
+function codeToMidi(code, loopsJson) {
+  const { parsed, rowNotes } = arrangeNotes(code, loopsJson);
+  const chunks = [trackChunk(metaBytes(parsed.bpm))];
+  for (let r = 0; r < 5; r++) {
+    if (rowNotes[r].length === 0) continue;
+    chunks.push(trackChunk(noteBytes(ROW_NAMES[r], ROW_CHANNELS[r], ROW_PROGRAMS[r], rowNotes[r])));
+  }
+  return Buffer.concat([smfHeader(1, chunks.length), ...chunks]);
+}
+
+/** LG1 code + loops table -> per-row single-track stems.
+ *  Returns [{ row, name, midi }] for rows that have notes (others omitted).
+ *  Each stem is a format-0 SMF whose ONE track carries tempo/4-4/Am plus the
+ *  row's notes — single-track on purpose: GarageBand iOS only lands drums on
+ *  a drum kit when a single-track file is dropped onto a Drums track. */
+function codeToStems(code, loopsJson) {
+  const { parsed, rowNotes } = arrangeNotes(code, loopsJson);
+  const stems = [];
+  for (let r = 0; r < 5; r++) {
+    if (rowNotes[r].length === 0) continue;
+    const track = trackChunk(
+      metaBytes(parsed.bpm).concat(
+        noteBytes(ROW_NAMES[r], ROW_CHANNELS[r], ROW_PROGRAMS[r], rowNotes[r])
+      )
+    );
+    stems.push({ row: r, name: ROW_NAMES[r], midi: Buffer.concat([smfHeader(0, 1), track]) });
+  }
+  return stems;
+}
+
+function loadLoops() {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, 'loops.json'), 'utf8'));
+}
+
+// ── CLI ──────────────────────────────────────────────────────────────────────
+
+function main() {
+  const argv = process.argv.slice(2);
+  const stemsMode = argv[0] === '--stems';
+  const [code, outPath] = stemsMode ? argv.slice(1) : argv;
+  if (!code || !outPath) {
+    console.error('Usage: node tools/loopgrid-midi.js "<LG1 code from the export panel>" out.mid');
+    console.error('       node tools/loopgrid-midi.js --stems "<LG1 code>" out.mid');
+    console.error('  --stems writes one single-track file per playing row');
+    console.error('  (out-Drums.mid, out-Bass.mid, ...) instead of one combined file.');
+    process.exit(2);
+  }
+  try {
+    const loops = loadLoops();
+    if (stemsMode) {
+      const stems = codeToStems(code, loops);
+      if (stems.length === 0) {
+        console.error('ERROR: this code contains no notes — nothing to write.');
+        process.exit(1);
+      }
+      const base = outPath.replace(/\.midi?$/i, '');
+      for (const s of stems) {
+        const p = base + '-' + s.name + '.mid';
+        fs.writeFileSync(p, s.midi);
+        console.log('Wrote ' + p + ' (' + s.midi.length + ' bytes)');
+      }
+      console.log(stems.length + ' stem(s). In GarageBand, drop ' + base +
+        '-Drums.mid (and -Perc) onto a Drums track so they land on a kit.');
+    } else {
+      const midi = codeToMidi(code, loops);
+      fs.writeFileSync(outPath, midi);
+      console.log('Wrote ' + outPath + ' (' + midi.length + ' bytes). Open it in GarageBand.');
+    }
+  } catch (e) {
+    console.error('ERROR: ' + e.message);
+    process.exit(1);
+  }
+}
+
+module.exports = { lg1Checksum, parseLG1, unpackPattern, buildArrangement, notesForSegment, codeToMidi, codeToStems, loadLoops, ROW_NAMES };
+
+if (require.main === module) main();
+
+/* ---- end verbatim source ---- */
+return module.exports;
+})();
+/* END LOOPGRID LIB */
+
+/* BEGIN LOOPS — tools/loops.json spliced by build-page.js */
+const LOOPS = {"version":1,"bpm":105,"key":"Am","loopBeats":8,"rows":["Drums","Bass","Keys","Lead","Perc"],"seeds":{"chords":20260901,"drumBase":7000},"chords":[{"root":57,"notes":[57,60,64]},{"root":65,"notes":[57,60,65]},{"root":60,"notes":[55,60,64]},{"root":67,"notes":[55,59,62]}],"loops":[[[[0,0.25,36,79],[0.5,0.25,42,52],[1,0.25,38,83],[1.5,0.25,36,62],[1.5,0.25,42,50],[2.5,0.25,42,52],[2.75,0.25,36,71],[3,0.25,38,85],[3.5,0.25,42,50],[4,0.25,36,79],[4.5,0.25,42,52],[5,0.25,38,83],[5.5,0.25,36,62],[5.5,0.25,42,50],[6.5,0.25,42,52],[6.75,0.25,36,71],[7,0.25,38,85],[7.5,0.25,42,50]],[[0,0.25,36,87],[0.5,0.25,42,57],[1,0.25,38,91],[1.5,0.25,36,68],[1.5,0.25,42,54],[1.75,0.25,38,33],[2.5,0.25,42,57],[2.75,0.25,36,78],[3,0.25,38,93],[3.5,0.25,42,54],[3.75,0.25,38,31],[4,0.25,36,87],[4.5,0.25,42,57],[5,0.25,38,91],[5.5,0.25,36,68],[5.5,0.25,42,54],[5.75,0.25,38,33],[6.5,0.25,42,57],[6.75,0.25,36,78],[7,0.25,38,93],[7.5,0.25,42,54],[7.75,0.25,36,56],[7.75,0.25,38,31]],[[0,0.25,36,94],[0,0.25,42,72],[0.25,0.25,42,37],[0.5,0.25,42,53],[0.75,0.25,42,37],[1,0.25,38,96],[1,0.25,42,70],[1.25,0.25,42,37],[1.5,0.25,36,77],[1.5,0.25,42,51],[1.75,0.25,42,37],[2,0.25,36,88],[2,0.25,42,72],[2.25,0.25,42,37],[2.5,0.25,42,53],[2.75,0.25,42,37],[3,0.25,38,97],[3,0.25,42,70],[3.25,0.25,42,37],[3.5,0.25,38,32],[3.5,0.25,42,51],[3.75,0.25,36,54],[3.75,0.25,42,37],[4,0.25,36,94],[4,0.25,42,72],[4.25,0.25,42,37],[4.5,0.25,42,53],[4.75,0.25,42,37],[5,0.25,38,96],[5,0.25,42,70],[5.25,0.25,42,37],[5.5,0.25,36,77],[5.5,0.25,42,51],[5.75,0.25,42,37],[6,0.25,36,88],[6,0.25,42,72],[6.25,0.25,42,37],[6.5,0.25,42,53],[6.75,0.25,42,37],[7,0.25,38,97],[7,0.25,42,70],[7.25,0.25,42,37],[7.5,0.25,38,32],[7.5,0.25,42,51],[7.5,0.25,60,62],[7.75,0.25,36,54],[7.75,0.25,42,37]],[[0,0.25,36,99],[0,0.25,42,78],[0.5,0.25,42,59],[1,0.25,38,101],[1,0.25,42,78],[1.5,0.25,42,59],[2,0.25,36,93],[2,0.25,42,78],[2.5,0.25,42,59],[2.75,0.25,36,71],[3,0.25,38,103],[3,0.25,42,78],[3.5,0.25,38,34],[3.5,0.25,42,59],[4,0.25,36,99],[4,0.25,42,78],[4.5,0.25,42,59],[5,0.25,38,101],[5,0.25,42,78],[5.5,0.25,42,59],[6,0.25,36,93],[6,0.25,42,78],[6.5,0.25,42,59],[6.75,0.25,36,71],[7,0.25,38,103],[7,0.25,42,78],[7.5,0.25,38,34],[7.5,0.25,42,59],[7.5,0.25,60,66]],[[0,0.25,36,106],[0.5,0.25,60,78],[1,0.25,36,106],[1,0.25,39,90],[1.5,0.25,60,80],[2,0.25,36,106],[2.5,0.25,60,78],[3,0.25,36,106],[3,0.25,39,90],[3.5,0.25,60,80],[4,0.25,36,106],[4.5,0.25,60,78],[5,0.25,36,106],[5,0.25,39,90],[5.5,0.25,60,80],[6,0.25,36,106],[6.5,0.25,60,78],[7,0.25,36,106],[7,0.25,39,90],[7.5,0.25,60,80]],[[0,0.25,36,105],[0,0.25,42,78],[0.25,0.25,42,41],[0.5,0.25,36,71],[0.5,0.25,42,57],[0.75,0.25,42,41],[1,0.25,38,107],[1,0.25,42,76],[1.25,0.25,42,41],[1.5,0.25,42,55],[1.75,0.25,36,85],[1.75,0.25,38,36],[1.75,0.25,42,41],[2,0.25,42,78],[2.25,0.25,38,32],[2.25,0.25,42,41],[2.5,0.25,36,92],[2.5,0.25,42,55],[2.75,0.25,42,41],[3,0.25,38,108],[3,0.25,42,75],[3.25,0.25,42,41],[3.5,0.25,42,57],[3.75,0.25,38,39],[3.75,0.25,42,41],[4,0.25,36,105],[4,0.25,42,78],[4.25,0.25,42,41],[4.5,0.25,36,71],[4.5,0.25,42,57],[4.75,0.25,42,41],[5,0.25,38,107],[5,0.25,42,76],[5.25,0.25,42,41],[5.5,0.25,42,55],[5.75,0.25,36,85],[5.75,0.25,38,36],[5.75,0.25,42,41],[6,0.25,42,78],[6.25,0.25,38,32],[6.25,0.25,42,41],[6.5,0.25,36,92],[6.5,0.25,42,55],[6.75,0.25,42,41],[7,0.25,38,108],[7,0.25,42,75],[7.25,0.25,42,41],[7.5,0.25,42,57],[7.75,0.25,38,39],[7.75,0.25,42,41]],[[0,0.25,36,109],[0,0.25,42,80],[0.0833,0.25,42,71],[0.25,0.25,42,79],[0.4167,0.25,42,87],[0.5833,0.25,42,96],[0.75,0.25,42,55],[1,0.25,42,78],[1.5,0.25,36,91],[1.5,0.25,42,64],[2,0.25,38,107],[2,0.25,39,87],[2,0.25,42,80],[2.5,0.25,36,95],[2.75,0.25,42,55],[3,0.25,42,78],[3.5,0.25,42,64],[4,0.25,36,109],[4,0.25,42,80],[4.75,0.25,42,55],[5,0.25,42,78],[5.5,0.25,36,91],[5.5,0.25,42,64],[6,0.25,38,107],[6,0.25,39,87],[6,0.25,42,80],[6.5,0.25,36,95],[6.75,0.25,42,55],[7,0.25,42,78],[7.5,0.25,42,64],[7.75,0.25,36,66],[7.75,0.25,42,55],[7.9167,0.25,42,63]],[[0,0.25,36,119],[0.5,0.25,60,88],[1,0.25,36,119],[1,0.25,39,102],[1.5,0.25,60,90],[2,0.25,36,119],[2.5,0.25,60,88],[3,0.25,36,119],[3,0.25,39,102],[3.5,0.25,60,90],[4,0.25,36,119],[4.5,0.25,60,88],[5,0.25,36,119],[5,0.25,39,102],[5.5,0.25,60,90],[6,0.25,36,119],[6.5,0.25,60,88],[7,0.25,36,119],[7,0.25,39,102],[7.5,0.25,60,90]]],[[[0,1.9,33,92],[2,1.9,29,92],[4,1.9,36,92],[6,1.9,31,92]],[[0,1.35,33,100],[1.5,0.4,33,78],[2,1.35,29,100],[3.5,0.4,29,78],[4,1.35,36,100],[5.5,0.4,36,78],[6,1.35,31,100],[7.5,0.4,31,78]],[[0,0.42,33,98],[0.5,0.42,40,82],[1,0.42,33,98],[1.5,0.42,40,82],[2,0.42,29,98],[2.5,0.42,36,82],[3,0.42,29,98],[3.5,0.42,36,82],[4,0.42,36,98],[4.5,0.42,43,82],[5,0.42,36,98],[5.5,0.42,43,82],[6,0.42,31,98],[6.5,0.42,38,82],[7,0.42,31,98],[7.5,0.42,38,82]],[[0,0.42,33,100],[0.5,0.42,45,85],[1,0.42,33,100],[1.5,0.42,45,85],[2,0.42,29,100],[2.5,0.42,41,85],[3,0.42,29,100],[3.5,0.42,41,85],[4,0.42,36,100],[4.5,0.42,48,85],[5,0.42,36,100],[5.5,0.42,48,85],[6,0.42,31,100],[6.5,0.42,43,85],[7,0.42,31,100],[7.5,0.42,43,85]],[[0.5,0.38,33,100],[1.5,0.38,33,100],[2.5,0.38,29,100],[3.5,0.38,29,100],[4.5,0.38,36,100],[5.5,0.38,36,100],[6.5,0.38,31,100],[7.5,0.38,31,100]],[[0,0.22,33,105],[0.75,0.2,33,62],[1,0.22,40,90],[1.5,0.3,45,84],[1.75,0.2,33,58],[2,0.22,29,105],[2.75,0.2,29,62],[3,0.22,36,90],[3.5,0.3,41,84],[3.75,0.2,29,58],[4,0.22,36,105],[4.75,0.2,36,62],[5,0.22,43,90],[5.5,0.3,48,84],[5.75,0.2,36,58],[6,0.22,31,105],[6.75,0.2,31,62],[7,0.22,38,90],[7.5,0.3,43,84],[7.75,0.2,31,58]],[[0,0.2,33,105],[0.25,0.2,33,72],[0.5,0.2,45,72],[0.75,0.2,33,72],[1,0.2,40,105],[1.25,0.2,33,72],[1.5,0.2,45,72],[1.75,0.2,33,72],[2,0.2,29,105],[2.25,0.2,29,72],[2.5,0.2,41,72],[2.75,0.2,29,72],[3,0.2,36,105],[3.25,0.2,29,72],[3.5,0.2,41,72],[3.75,0.2,29,72],[4,0.2,36,105],[4.25,0.2,36,72],[4.5,0.2,48,72],[4.75,0.2,36,72],[5,0.2,43,105],[5.25,0.2,36,72],[5.5,0.2,48,72],[5.75,0.2,36,72],[6,0.2,31,105],[6.25,0.2,31,72],[6.5,0.2,43,72],[6.75,0.2,31,72],[7,0.2,38,105],[7.25,0.2,31,72],[7.5,0.2,43,72],[7.75,0.2,31,72]],[[0,0.44,33,106],[0.5,0.44,33,88],[1,0.44,33,106],[1.5,0.44,40,88],[2,0.44,29,106],[2.5,0.44,29,88],[3,0.44,29,106],[3.5,0.44,36,88],[4,0.44,36,106],[4.5,0.44,36,88],[5,0.44,36,106],[5.5,0.44,43,88],[6,0.44,31,106],[6.5,0.44,31,88],[7,0.44,31,106],[7.5,0.44,38,88]]],[[[0,0.9,57,62],[0,0.9,60,62],[0,0.9,64,62],[2,0.9,57,62],[2,0.9,60,62],[2,0.9,65,62],[4,0.9,55,62],[4,0.9,60,62],[4,0.9,64,62],[6,0.9,55,62],[6,0.9,59,62],[6,0.9,62,62]],[[0,1.7,57,72],[0,1.7,60,72],[0,1.7,64,72],[2,1.7,57,72],[2,1.7,60,72],[2,1.7,65,72],[4,1.7,55,72],[4,1.7,60,72],[4,1.7,64,72],[6,1.7,55,72],[6,1.7,59,72],[6,1.7,62,72]],[[0,1.6,57,70],[0.12,1.6,60,70],[0.24,1.6,64,70],[2,1.6,57,70],[2.12,1.6,60,70],[2.24,1.6,65,70],[4,1.6,55,70],[4.12,1.6,60,70],[4.24,1.6,64,70],[6,1.6,55,70],[6.12,1.6,59,70],[6.24,1.6,62,70]],[[0.5,0.6,57,74],[0.5,0.6,60,74],[0.5,0.6,64,74],[1.5,0.45,57,66],[1.5,0.45,60,66],[1.5,0.45,64,66],[2.5,0.6,57,74],[2.5,0.6,60,74],[2.5,0.6,65,74],[3.5,0.45,57,66],[3.5,0.45,60,66],[3.5,0.45,65,66],[4.5,0.6,55,74],[4.5,0.6,60,74],[4.5,0.6,64,74],[5.5,0.45,55,66],[5.5,0.45,60,66],[5.5,0.45,64,66],[6.5,0.6,55,74],[6.5,0.6,59,74],[6.5,0.6,62,74],[7.5,0.45,55,66],[7.5,0.45,59,66],[7.5,0.45,62,66]],[[0,0.28,57,84],[0,0.28,60,84],[0,0.28,64,84],[1,0.25,57,76],[1,0.25,60,76],[1,0.25,64,76],[1.5,0.25,57,70],[1.5,0.25,60,70],[1.5,0.25,64,70],[2,0.28,57,84],[2,0.28,60,84],[2,0.28,65,84],[3,0.25,57,76],[3,0.25,60,76],[3,0.25,65,76],[3.5,0.25,57,70],[3.5,0.25,60,70],[3.5,0.25,65,70],[4,0.28,55,84],[4,0.28,60,84],[4,0.28,64,84],[5,0.25,55,76],[5,0.25,60,76],[5,0.25,64,76],[5.5,0.25,55,70],[5.5,0.25,60,70],[5.5,0.25,64,70],[6,0.28,55,84],[6,0.28,59,84],[6,0.28,62,84],[7,0.25,55,76],[7,0.25,59,76],[7,0.25,62,76],[7.5,0.25,55,70],[7.5,0.25,59,70],[7.5,0.25,62,70]],[[0,0.35,57,78],[0,0.35,60,78],[0,0.35,64,78],[0.75,0.6,57,70],[0.75,0.6,60,70],[0.75,0.6,64,70],[2,0.35,57,78],[2,0.35,60,78],[2,0.35,65,78],[2.75,0.6,57,70],[2.75,0.6,60,70],[2.75,0.6,65,70],[4,0.35,55,78],[4,0.35,60,78],[4,0.35,64,78],[4.75,0.6,55,70],[4.75,0.6,60,70],[4.75,0.6,64,70],[6,0.35,55,78],[6,0.35,59,78],[6,0.35,62,78],[6.75,0.6,55,70],[6.75,0.6,59,70],[6.75,0.6,62,70]],[[0,0.4,57,76],[0.5,0.4,60,76],[1,0.4,64,76],[1.5,0.4,76,76],[2,0.4,57,76],[2.5,0.4,60,76],[3,0.4,65,76],[3.5,0.4,77,76],[4,0.4,55,76],[4.5,0.4,60,76],[5,0.4,64,76],[5.5,0.4,76,76],[6,0.4,55,76],[6.5,0.4,59,76],[7,0.4,62,76],[7.5,0.4,74,76]],[[0,1.85,57,92],[0,1.85,60,92],[0,1.85,64,92],[0,1.85,76,80],[2,1.85,57,92],[2,1.85,60,92],[2,1.85,65,92],[2,1.85,77,80],[4,1.85,55,92],[4,1.85,60,92],[4,1.85,64,92],[4,1.85,76,80],[6,1.85,55,92],[6,1.85,59,92],[6,1.85,62,92],[6,1.85,74,80]]],[[[0,1,69,100],[2,1,74,100]],[[0,1,69,100],[1,1,74,100],[2,1,79,100],[4,1,74,100],[5,1,69,100]],[[1,1,69,100],[3,1,74,100],[5,1,79,100],[7,1,76,100]],[[0,1,79,100],[2,1,76,100],[3,1,74,100],[5,1,69,100],[6,1,74,100]],[[0,0.5,69,100],[0.5,0.5,74,100],[1,1,79,100],[2,0.5,74,100],[2.5,0.5,79,100],[3,1,81,100],[4,1,79,100],[5,0.5,74,100],[5.5,0.5,69,100]],[[0,1,98,100],[2,1,93,100],[3,1,91,100],[5,1,86,100],[6,1,91,100]],[[0,1,69,100],[1,1,69,100],[2,0.5,74,100],[2.5,0.5,76,100],[3,1,79,100],[5,1,79,100],[6,0.5,81,100],[6.5,0.5,79,100],[7,1,74,100]],[[0,1,98,100],[1,0.5,93,100],[1.5,0.5,91,100],[2,1,93,100],[3,0.5,91,100],[3.5,0.5,86,100],[4,1,91,100],[5,0.5,86,100],[5.5,0.5,81,100],[6,1,86,100],[7,1,91,100]]],[[[0,0.25,70,62],[0.5,0.25,70,44],[1,0.25,70,62],[1.5,0.25,70,44],[2,0.25,70,62],[2.5,0.25,70,44],[3,0.25,70,62],[3.5,0.25,70,44],[4,0.25,70,62],[4.5,0.25,70,44],[5,0.25,70,62],[5.5,0.25,70,44],[6,0.25,70,62],[6.5,0.25,70,44],[7,0.25,70,62],[7.5,0.25,70,44]],[[1,0.25,37,72],[2.5,0.25,37,60],[5,0.25,37,72],[6.75,0.25,37,64]],[[0,0.25,42,52],[0.25,0.25,42,30],[0.5,0.25,42,40],[0.75,0.25,42,30],[1,0.25,42,52],[1.25,0.25,42,30],[1.5,0.25,42,40],[1.75,0.25,42,30],[2,0.25,42,52],[2.25,0.25,42,30],[2.5,0.25,42,40],[2.75,0.25,42,30],[3,0.25,42,52],[3.25,0.25,42,30],[3.5,0.25,42,40],[3.75,0.25,42,30],[4,0.25,42,52],[4.25,0.25,42,30],[4.5,0.25,42,40],[4.75,0.25,42,30],[5,0.25,42,52],[5.25,0.25,42,30],[5.5,0.25,42,40],[5.75,0.25,42,30],[6,0.25,42,52],[6.25,0.25,42,30],[6.5,0.25,42,40],[6.75,0.25,42,30],[7,0.25,42,52],[7.25,0.25,42,30],[7.5,0.25,42,40],[7.75,0.25,42,30]],[[0,0.25,70,40],[0.5,0.25,70,40],[1,0.25,39,84],[1,0.25,70,40],[1.5,0.25,70,40],[2,0.25,70,40],[2.5,0.25,70,40],[3,0.25,39,84],[3,0.25,70,40],[3.5,0.25,70,40],[4,0.25,70,40],[4.5,0.25,70,40],[5,0.25,39,84],[5,0.25,70,40],[5.5,0.25,70,40],[6,0.25,70,40],[6.5,0.25,70,40],[7,0.25,39,86],[7,0.25,70,40],[7.5,0.25,70,40]],[[0.5,0.25,60,62],[1.5,0.25,60,62],[2.5,0.25,60,62],[3.5,0.25,60,62],[4.5,0.25,60,62],[5.5,0.25,60,62],[6.5,0.25,60,62],[7.5,0.25,60,62]],[[0,0.25,41,78],[0.75,0.25,50,58],[1.5,0.25,41,60],[2.5,0.25,50,66],[3.5,0.25,41,70],[4,0.25,41,78],[4.75,0.25,50,58],[5.5,0.25,41,60],[6.5,0.25,50,70],[7,0.25,41,66]],[[0,0.25,70,64],[0.25,0.25,70,34],[0.5,0.25,70,46],[0.75,0.25,70,34],[1,0.25,70,64],[1.25,0.25,70,34],[1.5,0.25,70,46],[1.75,0.25,37,62],[1.75,0.25,70,34],[2,0.25,70,64],[2.25,0.25,70,34],[2.5,0.25,70,46],[2.75,0.25,70,34],[3,0.25,70,64],[3.25,0.25,37,58],[3.25,0.25,70,34],[3.5,0.25,70,46],[3.75,0.25,70,34],[4,0.25,70,64],[4.25,0.25,70,34],[4.5,0.25,70,46],[4.75,0.25,70,34],[5,0.25,70,64],[5.25,0.25,70,34],[5.5,0.25,70,46],[5.75,0.25,37,62],[5.75,0.25,70,34],[6,0.25,70,64],[6.25,0.25,70,34],[6.5,0.25,70,46],[6.75,0.25,70,34],[7,0.25,70,64],[7.25,0.25,37,60],[7.25,0.25,70,34],[7.5,0.25,70,46],[7.75,0.25,70,34]],[[0,0.25,70,68],[0.25,0.25,70,42],[0.5,0.25,60,58],[0.5,0.25,70,42],[0.75,0.25,70,42],[1,0.25,39,82],[1,0.25,70,68],[1.25,0.25,70,42],[1.5,0.25,60,58],[1.5,0.25,70,42],[1.75,0.25,70,42],[2,0.25,70,68],[2.25,0.25,70,42],[2.5,0.25,60,58],[2.5,0.25,70,42],[2.75,0.25,70,42],[3,0.25,39,82],[3,0.25,70,68],[3.25,0.25,70,42],[3.5,0.25,60,58],[3.5,0.25,70,42],[3.75,0.25,70,42],[4,0.25,70,68],[4.25,0.25,70,42],[4.5,0.25,60,58],[4.5,0.25,70,42],[4.75,0.25,70,42],[5,0.25,39,82],[5,0.25,70,68],[5.25,0.25,70,42],[5.5,0.25,60,58],[5.5,0.25,70,42],[5.75,0.25,70,42],[6,0.25,70,68],[6.25,0.25,70,42],[6.5,0.25,60,58],[6.5,0.25,70,42],[6.75,0.25,70,42],[7,0.25,39,84],[7,0.25,70,68],[7.25,0.25,70,42],[7.5,0.25,60,58],[7.5,0.25,70,42],[7.75,0.25,70,42]]]]};
+/* END LOOPS */
+
+/* ── page wiring: DISPLAY ONLY. All parsing, arrangement and MIDI writing
+   comes from the spliced LoopGridMidi library above — this section must never
+   re-implement any LG1/SMF logic. ─────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+let state = null;
+
+function download(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function keyLabel(k) { return k === 'Am' ? 'A minor' : k; }
+
+function summarize(parsed, stems) {
+  const segs = LoopGridMidi.buildArrangement(parsed.timeline, parsed.endBar);
+  const playing = new Set(stems.map((s) => s.row));
+  let html = '<tr><th>Tempo</th><td>' + parsed.bpm + ' BPM</td></tr>' +
+             '<tr><th>Key</th><td>' + keyLabel(parsed.key) + '</td></tr>' +
+             '<tr><th>Length</th><td>' + parsed.endBar + ' bars</td></tr>';
+  for (let r = 0; r < LoopGridMidi.ROW_NAMES.length; r++) {
+    const desc = !playing.has(r) ? '<span class="muted">—</span>'
+      : segs[r].map((s) => 'loop ' + s.col + ' (bar ' + s.startBar + '–' + s.endBar + ')').join(', ');
+    html += '<tr><th>' + LoopGridMidi.ROW_NAMES[r] + '</th><td>' + desc + '</td></tr>';
+  }
+  $('summary').innerHTML = html;
+}
+
+$('decode').addEventListener('click', () => {
+  $('parseError').classList.add('hidden');
+  $('result').classList.add('hidden');
+  state = null;
+  try {
+    const input = $('code').value;
+    const parsed = LoopGridMidi.parseLG1(input);
+    const combined = LoopGridMidi.codeToMidi(input, LOOPS); // also validates bpm vs the loop table
+    const stems = LoopGridMidi.codeToStems(input, LOOPS);
+    state = { parsed, combined, stems };
+  } catch (e) {
+    $('parseError').textContent = e.message;
+    $('parseError').classList.remove('hidden');
+    return;
+  }
+  summarize(state.parsed, state.stems);
+  $('ckTempo').textContent = state.parsed.bpm;
+  $('ckKey').textContent = keyLabel(state.parsed.key);
+  const anyNotes = state.stems.length > 0;
+  $('dlArrangement').disabled = !anyNotes;
+  $('dlStems').disabled = !anyNotes;
+  $('dlStems').textContent = 'Stems (' + state.stems.length + ' file' + (state.stems.length === 1 ? '' : 's') + ')';
+  $('result').classList.remove('hidden');
+});
+
+$('dlArrangement').addEventListener('click', () => {
+  if (!state) return;
+  download('LoopGrid-Arrangement.mid', state.combined);
+});
+
+$('dlStems').addEventListener('click', () => {
+  if (!state) return;
+  state.stems.forEach((s, i) => setTimeout(() => download('LoopGrid-' + s.name + '.mid', s.midi), i * 350));
+});
+</script>
+</body>
+</html>
