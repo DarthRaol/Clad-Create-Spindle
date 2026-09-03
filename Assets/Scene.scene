@@ -838,6 +838,16 @@
     armedCellColor: true
     playingCellColor: true
     tapSfxEnabled: true
+    drumsVolume: true
+    bassVolume: true
+    keysVolume: true
+    leadVolume: true
+    percVolume: true
+    kickVolume: true
+    snareVolume: true
+    hatVolume: true
+    clapVolume: true
+    shakerVolume: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -848,6 +858,16 @@
       playingCellColor: !<Vec4> {x: 0.200000, y: 0.900000, z: 1.000000, w: 1.000000}
       tapSfxEnabled: true
       cellMinAimSeconds: !<float> 0.000000
+      drumsVolume: 0.950000
+      bassVolume: 0.950000
+      keysVolume: 0.750000
+      leadVolume: 0.700000
+      percVolume: 0.650000
+      kickVolume: 0.900000
+      snareVolume: 0.850000
+      hatVolume: 0.700000
+      clapVolume: 0.800000
+      shakerVolume: 0.600000
   ScriptTypes:
     "":
       {}

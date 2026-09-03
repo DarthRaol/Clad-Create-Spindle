@@ -13,6 +13,9 @@
  * index CUSTOM_COL (8) holding the user-authored 16-step pattern. It is a
  * normal cell to this model — tapCell arms/stop-arms/cancels it exactly like
  * columns 0..7 and commit() emits its code as letter+9 ("D9"/"P9") — but it
+ * is the CONTROLLER that decides when to call tapCell for it: opening the
+ * step editor is not an arm; an empty pattern first arms when a step is
+ * drawn (see LoopGridMain.handleCellTap / handleStepToggle). It also
  * belongs to NO scene column: armScene(col) only ever arms col 0..7, so a
  * scene launch replaces a playing custom pattern (correct Live Loops
  * semantics) yet can never arm the custom cell itself.

@@ -29,10 +29,20 @@
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
     armedCellColor: false
+    bassVolume: false
     cellMinAimSeconds: false
+    clapVolume: false
+    drumsVolume: false
+    hatVolume: false
     idleCellColor: false
+    keysVolume: false
+    kickVolume: false
+    leadVolume: false
     masterVolume: false
+    percVolume: false
     playingCellColor: false
+    shakerVolume: false
+    snareVolume: false
     tapSfxEnabled: false
   ScriptTypesHidden:
     {}
@@ -49,6 +59,16 @@
       playingCellColor: !<Vec4> {x: 0.200000, y: 0.900000, z: 1.000000, w: 1.000000}
       tapSfxEnabled: true
       cellMinAimSeconds: 0.150000
+      drumsVolume: 0.950000
+      bassVolume: 0.950000
+      keysVolume: 0.750000
+      leadVolume: 0.700000
+      percVolume: 0.650000
+      kickVolume: 0.900000
+      snareVolume: 0.850000
+      hatVolume: 0.700000
+      clapVolume: 0.800000
+      shakerVolume: 0.600000
   ScriptTypes:
     -
       {}
@@ -63,4 +83,20 @@
     - '// @input vec4 playingCellColor = "{0.20,0.90,1.00,1}" {"hint":"Cell color while its loop is playing", "widget":"color"}'
     - '// @input bool tapSfxEnabled = true {"hint":"Play a short click when a cell is armed or stopped"}'
     - '// @input float cellMinAimSeconds {"hint":"Extra strictness on top of the built-in travel guard: require the cell to be hovered (targeted, hand open) this many seconds before the pinch starts. 0 = gesture-state guard only, which already rejects cells a pinched hand sweeps through.", "widget":"slider", "min":0, "max":0.5, "step":0.01}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">Row mix</span>"}'
+    - '// @ui {"widget":"group_start", "label":"Row mix"}'
+    - '// @input float drumsVolume = 0.95 {"hint":"Drums row level, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float bassVolume = 0.95 {"hint":"Bass row level, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float keysVolume = 0.75 {"hint":"Keys row level, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float leadVolume = 0.7 {"hint":"Lead row level, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float percVolume = 0.65 {"hint":"Perc row level, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">Custom pattern lane mix</span>"}'
+    - '// @ui {"widget":"group_start", "label":"Custom pattern lane mix"}'
+    - '// @input float kickVolume = 0.9 {"hint":"Kick lane level for custom patterns, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float snareVolume = 0.85 {"hint":"Snare lane level for custom patterns, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float hatVolume = 0.7 {"hint":"Hat lane level for custom patterns, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float clapVolume = 0.8 {"hint":"Clap lane level for custom patterns, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
+    - '// @input float shakerVolume = 0.6 {"hint":"Shaker lane level for custom patterns, multiplied by Master Volume", "widget":"slider", "min":0, "max":1, "step":0.05}'
     - '// @ui {"widget":"group_end"}'

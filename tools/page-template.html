@@ -9,6 +9,8 @@
   Template: tools/page-template.html. The LG1 parser and MIDI writer are
   spliced VERBATIM from tools/loopgrid-midi.js, and the loop table from
   tools/loops.json, by:  node tools/build-page.js
+  That same build also syncs docs/loops/*.wav (the Live Loops downloads) from
+  Assets/GeneratedSFX/Loop_R*C*.wav — the page links them, never embeds them.
   Drift guard (byte-compares page output against the Node tool):
                         node tools/build-page.test.js
 -->
@@ -76,7 +78,8 @@
 <body>
 <main>
   <h1>LoopGrid → GarageBand</h1>
-  <p class="sub">Paste the export code from the Lens panel to turn your session into MIDI.</p>
+  <p class="sub">Paste the export code from the Lens panel to turn your session into
+  MIDI — or into a Live Loops grid built from the loops you actually heard.</p>
 
   <section>
     <h2>Export code</h2>
@@ -129,6 +132,29 @@
       quickest overview, but drums won't sound like drums. Stems are single-track
       files, so the Drums and Perc stems can be dropped onto a Drums track and land
       on a real kit.</p>
+      <p class="hint">Both downloads are built here in your browser — this page needs
+      no network once it has loaded.</p>
+    </section>
+
+    <section>
+      <h2>Rebuild in Live Loops</h2>
+      <p class="muted" style="margin:0 0 4px">GarageBand won't take multitrack MIDI
+      into a Live Loops grid, but it takes <strong>audio files</strong> into cells.
+      These are the exact WAVs the Lens played — 2 bars at 105 BPM each, so they
+      drop into cells with no stretching and your Specs grid becomes a Live Loops
+      grid, cell for cell.</p>
+      <ol class="steps">
+        <li>New song → <strong>Live Loops</strong>, and set the tempo to
+            <strong id="llTempo">105</strong>.</li>
+        <li>Tap an <strong>empty cell</strong> in the grid.</li>
+        <li>Choose <strong>Loops</strong> → <strong>Audio Files</strong>.</li>
+        <li>Pick the downloaded WAV — one row per instrument, so a row's cells stay
+            on that row.</li>
+      </ol>
+      <table id="cells"></table>
+      <p class="hint">⚠️ These WAV links download from this site, so this section
+      needs a network connection. The MIDI downloads above do not — grab the WAVs
+      while you're online.</p>
     </section>
   </div>
 </main>
@@ -173,6 +199,26 @@ function summarize(parsed, stems) {
   $('summary').innerHTML = html;
 }
 
+/* One row per distinct cell the session launched. The cell list — including
+   which cells have a WAV and what that WAV is called — comes from
+   LoopGridMidi.cellWavList(); the files live in docs/loops/, written by
+   tools/build-page.js from the same Assets/GeneratedSFX loops the Lens plays. */
+function renderCells(parsed) {
+  const cells = LoopGridMidi.cellWavList(parsed);
+  if (cells.length === 0) {
+    $('cells').innerHTML = '<tr><td class="muted">This session launched no cells.</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const c of cells) {
+    const what = c.custom
+      ? '<span class="muted">custom pattern — no WAV; use the ' + c.name + ' stem instead</span>'
+      : 'cell ' + c.col + ' — <a href="loops/' + c.file + '" download>' + c.file + '</a>';
+    html += '<tr><th>' + c.name + '</th><td>' + what + '</td></tr>';
+  }
+  $('cells').innerHTML = html;
+}
+
 $('decode').addEventListener('click', () => {
   $('parseError').classList.add('hidden');
   $('result').classList.add('hidden');
@@ -189,7 +235,9 @@ $('decode').addEventListener('click', () => {
     return;
   }
   summarize(state.parsed, state.stems);
+  renderCells(state.parsed);
   $('ckTempo').textContent = state.parsed.bpm;
+  $('llTempo').textContent = state.parsed.bpm;
   $('ckKey').textContent = keyLabel(state.parsed.key);
   const anyNotes = state.stems.length > 0;
   $('dlArrangement').disabled = !anyNotes;

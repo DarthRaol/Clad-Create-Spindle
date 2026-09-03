@@ -220,6 +220,39 @@ function buildArrangement(timeline, endBar) {
   return segments;
 }
 
+/**
+ * Distinct cells a parsed session launches, for the Live Loops rebuild list.
+ * Loop cells (col 1..8) yield { row, name, col, file } where file is the
+ * "Row-Col.wav" name used by docs/loops/ and GarageBandTest/reference-audio/
+ * (1-based col, matching the LG1 code digit). Custom cells (D9/P9) have no
+ * WAV and yield { row, name, custom: true } — their exact rendition is the
+ * row's MIDI stem. Stops (col 0) are not cells. Sorted by row, then column.
+ */
+function cellWavList(parsed) {
+  const seen = new Set();
+  const out = [];
+  for (const ev of parsed.timeline) {
+    for (const ch of ev.changes) {
+      if (ch.col === 0) continue;
+      const key = ch.row + ':' + ch.col;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (ch.col === CUSTOM_COL) {
+        out.push({ row: ch.row, name: ROW_NAMES[ch.row], custom: true });
+      } else {
+        out.push({
+          row: ch.row,
+          name: ROW_NAMES[ch.row],
+          col: ch.col,
+          file: ROW_NAMES[ch.row] + '-' + ch.col + '.wav',
+        });
+      }
+    }
+  }
+  out.sort((a, b) => a.row - b.row || (a.col || CUSTOM_COL) - (b.col || CUSTOM_COL));
+  return out;
+}
+
 /** Expand one CUSTOM segment (col 9) from an unpacked [lane][step] pattern.
  *  The 16-step pattern is exactly one bar, so it repeats EVERY bar of the
  *  segment (twice per 2-bar transport cycle). One 16th = TPQ/4 ticks. */
@@ -435,6 +468,6 @@ function main() {
   }
 }
 
-module.exports = { lg1Checksum, parseLG1, unpackPattern, buildArrangement, notesForSegment, codeToMidi, codeToStems, loadLoops, ROW_NAMES };
+module.exports = { lg1Checksum, parseLG1, unpackPattern, buildArrangement, notesForSegment, cellWavList, codeToMidi, codeToStems, loadLoops, ROW_NAMES };
 
 if (require.main === module) main();

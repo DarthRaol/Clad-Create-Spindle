@@ -18,7 +18,10 @@
  * 4 hex digits per lane (step 0 = MSB), lanes Kick,Snare,Hat,Clap,Shaker.
  * The pattern is captured AT EXPORT TIME: if the user edited it after
  * launching, the export carries the edited version for every D9/P9 launch
- * (live-edit semantics — the Lens also plays edits immediately).
+ * (live-edit semantics — the Lens also plays edits immediately). The D9/P9
+ * timeline bar is the downbeat after the FIRST STEP WAS DRAWN (drawing into
+ * an empty pattern is what arms the cell — opening the editor is not an
+ * arm), so an export never contains a launch of pure silence.
  * The final segment is ONE base-36 character: FNV-1a 32-bit over everything
  * before its "|" separator, mod 36. The companion tool refuses a code whose
  * checksum does not match, so a mis-copied character errors out instead of

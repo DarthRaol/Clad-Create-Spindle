@@ -7,13 +7,16 @@
 // — combined AND stems — against tools/loopgrid-midi.js running natively in
 // Node. Any divergence between the page and the tool fails here instead of
 // failing on a phone. Also fails if the committed docs/index.html is stale
-// relative to the current tool/template/loops.json.
+// relative to the current tool/template/loops.json, or if docs/loops/ does not
+// match the loop WAVs in Assets/GeneratedSFX (missing, stale, or orphaned) —
+// a broken Live Loops download would otherwise only show up as a 404.
 //
 // Run: node tools/build-page.test.js
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
-const { buildPage, stripShebang, OUT_PATH } = require('./build-page.js');
+const path = require('path');
+const { buildPage, stripShebang, loopFileMap, OUT_PATH, LOOPS_DIR } = require('./build-page.js');
 const tool = require('./loopgrid-midi.js');
 
 const html = buildPage();
@@ -78,7 +81,18 @@ for (const body of bodies) {
     assert.ok(Buffer.from(pageStems[i].midi).equals(toolStems[i].midi),
       'stem ' + toolStems[i].name + ' MIDI drift for ' + body);
   }
-  console.log('PASS bytes: combined + ' + toolStems.length + ' stem(s) identical for ' + body);
+  // The Live Loops cell list is shared source too — and every WAV it names
+  // must be a file the build actually published.
+  const pageCells = pageLib.cellWavList(pageLib.parseLG1(code));
+  assert.deepStrictEqual(pageCells, tool.cellWavList(tool.parseLG1(code)),
+    'cellWavList drift for ' + body);
+  for (const c of pageCells) {
+    if (c.custom) continue;
+    assert.ok(fs.existsSync(path.join(LOOPS_DIR, c.file)),
+      'page links loops/' + c.file + ' but that file is not in docs/loops/');
+  }
+  console.log('PASS bytes: combined + ' + toolStems.length + ' stem(s) identical, ' +
+    pageCells.length + ' cell(s) resolvable, for ' + body);
 }
 
 // Error paths must also come from the shared source, not diverge silently.
@@ -91,5 +105,27 @@ const onDisk = fs.existsSync(OUT_PATH) ? fs.readFileSync(OUT_PATH, 'utf8') : nul
 assert.strictEqual(onDisk, html,
   'docs/index.html is stale — regenerate it with: node tools/build-page.js');
 console.log('PASS freshness: committed docs/index.html matches a fresh build');
+
+// The page must not embed audio — the WAVs are linked so the MIDI path works
+// offline and the HTML stays small.
+assert.ok(!/data:audio\//i.test(html), 'page embeds audio as a data: URI — WAVs must be linked, not embedded');
+assert.ok(html.includes('href="loops/'), 'page does not link into docs/loops/');
+console.log('PASS linkage: WAVs are linked from loops/, not embedded');
+
+// ── docs/loops/ must match Assets/GeneratedSFX byte for byte ─────────────────
+const expected = loopFileMap();
+assert.ok(fs.existsSync(LOOPS_DIR), 'docs/loops/ is missing — run: node tools/build-page.js');
+for (const f of expected) {
+  const name = path.basename(f.dest);
+  assert.ok(fs.existsSync(f.dest),
+    'docs/loops/' + name + ' is missing — run: node tools/build-page.js');
+  assert.ok(fs.readFileSync(f.dest).equals(fs.readFileSync(f.src)),
+    'docs/loops/' + name + ' is stale vs ' + path.basename(f.src) + ' — run: node tools/build-page.js');
+}
+const keep = new Set(expected.map((f) => path.basename(f.dest)));
+const orphans = fs.readdirSync(LOOPS_DIR).filter((n) => !keep.has(n));
+assert.deepStrictEqual(orphans, [],
+  'docs/loops/ contains files no loop maps to: ' + orphans.join(', '));
+console.log('PASS loop WAVs: ' + expected.length + ' file(s) in docs/loops/ match Assets/GeneratedSFX, no orphans');
 
 console.log('ALL BUILD-PAGE TESTS PASSED');

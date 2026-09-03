@@ -1,7 +1,11 @@
 # LoopGrid → GarageBand Test Kit
 
-Everything needed to test LoopGrid MIDI exports in GarageBand on iPhone.
+Everything needed to test LoopGrid exports in GarageBand on iPhone.
 All content: **105 BPM, A minor, 4/4**. Every loop is 2 bars.
+
+The kit is **this folder** — copy `GarageBandTest/` itself. There is no zip to
+download; one used to be committed, but it was a binary duplicate of these same
+files that grew the repo on every change.
 
 **The workflow in one line: sketch in AR, finish in GarageBand.** The Lens is
 where you perform and draft — including drawing your own drum patterns in the
@@ -11,7 +15,41 @@ only ticks once per frame, so every custom hit lands up to a quarter of a
 precisely on its grid line. Judge feel and arrangement in the Lens; judge
 timing here, in GarageBand.
 
-> ## ⚠️ Set the song up BEFORE importing
+## Two routes: MIDI or Live Loops
+
+A session can come across as **notes** or as **audio**, and they are good for
+different things.
+
+| | **MIDI** (this folder) | **Live Loops** (WAVs) |
+|---|---|---|
+| What lands | Editable notes on GarageBand's instruments | The exact audio the Lens played |
+| Sounds like | GarageBand's sounds, not the Lens's | Identical to the Lens |
+| Grid layout | A linear arrangement on a timeline | Your grid, cell for cell |
+| Use it to | **Edit the notes** — fix timing, change a pitch, swap instruments, keep arranging | **Rebuild the grid with the real sounds** — keep performing and jamming |
+
+**MIDI** is the route the rest of this README covers: exact note timing, fully
+editable, but played by GarageBand's instruments rather than the loops you
+heard. It is also the only route that carries a custom drum pattern.
+
+**Live Loops** goes the other way. Every LoopGrid loop is exactly 2 bars at 105
+BPM, so the rendered WAVs drop into Live Loops cells with no stretching and no
+tempo fighting:
+
+1. New song → **Live Loops**, tempo **105**.
+2. Tap an **empty cell**.
+3. **Loops** → **Audio Files**.
+4. Pick the WAV. Keep one instrument per row, the way the Lens grid is laid out.
+
+The WAVs are the same renders the Lens plays, published at `docs/loops/` and
+named to match the export-code digits — `D3` in a code is `Drums-3.wav`. Open
+`docs/index.html` (in a browser, or the published Pages site), paste your export
+code, and the **Rebuild in Live Loops** section lists exactly the cells that
+session used with a download link for each. A custom-pattern cell (`D9`/`P9`)
+has no WAV — take that row as a MIDI stem instead.
+
+Reference copies of the cells used by the Demo are in `reference-audio/` here.
+
+> ## ⚠️ Set the song up BEFORE importing MIDI
 >
 > GarageBand imports MIDI at the **song's existing tempo** — it ignores the
 > tempo stored in the file. And a fixed-length song section **truncates** the
@@ -104,9 +142,10 @@ happens inside a song:
 ## Custom drum patterns
 
 Rows Drums and Perc each have a 9th **Custom** cell in the Lens. Tapping it
-opens a 16-step × 5-lane editor (Kick / Snare / Hat / Clap / Shaker) and arms
-the pattern like any other cell — it launches on the next downbeat, and the
-1-bar pattern plays twice per 2-bar cycle. In the Lens it is a *sketch*:
+opens a 16-step × 5-lane editor (Kick / Snare / Hat / Clap / Shaker) while the
+row keeps playing whatever it was playing; the cell arms itself the moment you
+draw the first step, then launches on the next downbeat like any other cell.
+The 1-bar pattern plays twice per 2-bar cycle. In the Lens it is a *sketch*:
 hits are triggered per-frame and land audibly loose. In the exported MIDI the
 same pattern is exact — kick on GM 36, snare 38, hat 42, clap 39, shaker 70,
 channel 10, every hit on its 16th-note line. The pattern travels inside the
@@ -127,3 +166,7 @@ node loopgrid-midi.js --stems "PASTE-CODE-HERE" my-session.mid
 
 A mistyped character is rejected with a checksum error rather than producing a
 wrong arrangement — re-read the code from the panel if that happens.
+
+The browser page does both routes from the same pasted code: the MIDI downloads
+are built locally in the page (no network needed), while the Live Loops WAV
+links download from the site, so grab those while you are online.

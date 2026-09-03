@@ -1,3 +1,9 @@
+# The GarageBand test kit is the GarageBandTest/ FOLDER, which is tracked.
+# The zip is a rebuilt-on-every-change 3.6 MB binary that duplicates it, and
+# each rebuild would store a new permanent blob in history. Build it on demand
+# instead of committing it.
+GarageBandTest.zip
+
 # Shipped by Lens Studio
 
 # The lines below are automatically generated and updated by Lens Studio.

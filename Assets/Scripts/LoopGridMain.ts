@@ -110,24 +110,23 @@ const HIT_TRACKS: AudioTrackAsset[] = [
   requireAsset("../GeneratedSFX/Hit_Clap.wav") as AudioTrackAsset,
   requireAsset("../GeneratedSFX/Hit_Shaker.wav") as AudioTrackAsset,
 ]
-/** Per-lane trim (x masterVolume) so sketch hits sit with the mixed loops. */
-const LANE_VOLUMES = [0.9, 0.85, 0.7, 0.8, 0.6]
-
 /** Everything is rendered in this key/tempo — display + export metadata. */
 const BPM = 105
 const KEY_NAME = "Am"
-/**
- * Per-row mix trim (Drums, Bass, Keys, Lead, Perc), multiplied by masterVolume.
- * Baked (not @input) to keep the Inspector at the ~6-knob cap; masterVolume is
- * the exposed volume control.
- */
-const ROW_VOLUMES = [0.95, 0.95, 0.75, 0.7, 0.65]
 const ROW_LABELS = ["Drums", "Bass", "Keys", "Lead", "Perc"]
 
 @component
 export class LoopGridMain extends BaseScriptComponent {
   @ui.label('<span style="color: #60A5FA;">LoopGridMain – Live Loops grid controller</span>')
   @ui.separator
+  // Inspector surface: 16 inputs across three groups — 6 here, plus the two
+  // 5-slider mix groups below. The mix trims are exposed because they are the
+  // only knobs with an audible musical result: they set how the rows and the
+  // custom-pattern lanes balance against each other, and the right values are
+  // a listening judgement, not something to recompile for. Everything else
+  // stays baked on purpose — geometry, panel sizes, labels, step counts and
+  // the lane contract are structural, and a slider on any of them would only
+  // let the Inspector desync the scene from the export format.
   @ui.label('<span style="color: #60A5FA;">Settings</span>')
   @ui.group_start("Settings")
   @input
@@ -158,6 +157,70 @@ export class LoopGridMain extends BaseScriptComponent {
   @hint("Extra strictness on top of the built-in travel guard: require the cell to be hovered (targeted, hand open) this many seconds before the pinch starts. 0 = gesture-state guard only, which already rejects cells a pinched hand sweeps through.")
   @widget(new SliderWidget(0, 0.5, 0.01))
   cellMinAimSeconds: number = 0
+  @ui.group_end
+
+  // Per-row mix trim, multiplied by masterVolume when the row's pooled players
+  // are created. Defaults are the mix the loops were rendered against: the
+  // melodic rows sit under the rhythm section so a full five-row launch does
+  // not turn to mud.
+  @ui.label('<span style="color: #60A5FA;">Row mix</span>')
+  @ui.group_start("Row mix")
+  @input
+  @hint("Drums row level, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  drumsVolume: number = 0.95
+
+  @input
+  @hint("Bass row level, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  bassVolume: number = 0.95
+
+  @input
+  @hint("Keys row level, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  keysVolume: number = 0.75
+
+  @input
+  @hint("Lead row level, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  leadVolume: number = 0.7
+
+  @input
+  @hint("Perc row level, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  percVolume: number = 0.65
+  @ui.group_end
+
+  // Per-lane trim for the custom-pattern one-shots (x masterVolume), so a
+  // hand-drawn sketch sits with the pre-mixed loops. Lane order is the
+  // cross-file contract in LoopGridCustomPattern.ts — these sliders set level
+  // only and never change which lane is which.
+  @ui.label('<span style="color: #60A5FA;">Custom pattern lane mix</span>')
+  @ui.group_start("Custom pattern lane mix")
+  @input
+  @hint("Kick lane level for custom patterns, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  kickVolume: number = 0.9
+
+  @input
+  @hint("Snare lane level for custom patterns, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  snareVolume: number = 0.85
+
+  @input
+  @hint("Hat lane level for custom patterns, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  hatVolume: number = 0.7
+
+  @input
+  @hint("Clap lane level for custom patterns, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  clapVolume: number = 0.8
+
+  @input
+  @hint("Shaker lane level for custom patterns, multiplied by Master Volume")
+  @widget(new SliderWidget(0, 1, 0.05))
+  shakerVolume: number = 0.6
   @ui.group_end
 
   // ── internals ─────────────────────────────────────────────────────────────
@@ -197,6 +260,15 @@ export class LoopGridMain extends BaseScriptComponent {
    */
   private laneSlots: AudioComponent[][] = []
   private laneToggle: number[] = []
+  /**
+   * Mix trims gathered from the Inspector sliders, indexed by row / lane in
+   * the canonical order (Drums..Perc, Kick..Shaker). Collected ONCE inside the
+   * OnStartEvent handler — the sliders are read there and nowhere else, so no
+   * property read can drift into onAwake, and the arrays keep the rest of the
+   * file's indexed access unchanged.
+   */
+  private rowVolumes: number[] = []
+  private laneVolumes: number[] = []
   /** Custom pattern per row; null for rows without a Custom cell. */
   private customPatterns: (LoopGridCustomPattern | null)[] = []
 
@@ -215,6 +287,11 @@ export class LoopGridMain extends BaseScriptComponent {
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
       this.customPatterns.push(CUSTOM_ROWS.indexOf(r) >= 0 ? new LoopGridCustomPattern() : null)
     }
+
+    // The only place the mix sliders are read. Order matches ROW_LABELS and
+    // the CUSTOM_LANE_NAMES lane contract.
+    this.rowVolumes = [this.drumsVolume, this.bassVolume, this.keysVolume, this.leadVolume, this.percVolume]
+    this.laneVolumes = [this.kickVolume, this.snareVolume, this.hatVolume, this.clapVolume, this.shakerVolume]
 
     this.buildAudio()
 
@@ -252,7 +329,7 @@ export class LoopGridMain extends BaseScriptComponent {
         so.setParent(this.sceneObject)
         const audio = so.createComponent("Component.AudioComponent") as AudioComponent
         audio.playbackMode = Audio.PlaybackMode.LowLatency
-        audio.volume = ROW_VOLUMES[r] * this.masterVolume
+        audio.volume = this.rowVolumes[r] * this.masterVolume
         slots.push(audio)
       }
       this.rowSlots.push(slots)
@@ -281,7 +358,7 @@ export class LoopGridMain extends BaseScriptComponent {
         const audio = so.createComponent("Component.AudioComponent") as AudioComponent
         audio.audioTrack = HIT_TRACKS[l]
         audio.playbackMode = Audio.PlaybackMode.LowLatency
-        audio.volume = LANE_VOLUMES[l] * this.masterVolume
+        audio.volume = this.laneVolumes[l] * this.masterVolume
         slots.push(audio)
       }
       this.laneSlots.push(slots)
@@ -414,14 +491,23 @@ export class LoopGridMain extends BaseScriptComponent {
   }
 
   private handleCellTap(row: number, col: number): void {
+    if (col === CUSTOM_COL) {
+      // Tapping Custom always opens (or retargets) the row's step editor —
+      // but it must NOT arm an EMPTY idle pattern: that would replace the
+      // row's playing loop with silence on the next downbeat while the user
+      // is still drawing. An empty pattern arms itself the first time a step
+      // is toggled ON instead (handleStepToggle). Once the cell is armed,
+      // playing, or holds a drawn pattern, the tap falls through to normal
+      // cell semantics (arm / cancel pending / arm stop) with the editor
+      // staying open until Close or export.
+      const p = this.customPatterns[row]
+      if (!p) return
+      this.gridUI.openPatternEditor(row, (lane, step) => p.get(lane, step))
+      const idle = this.model.active[row] !== CUSTOM_COL && !this.model.isPendingLaunch(row, CUSTOM_COL)
+      if (idle && p.isEmpty()) return
+    }
     const action = this.model.tapCell(row, col)
     this.playTapSfx(action)
-    if (col === CUSTOM_COL) {
-      // A Custom cell arms like any cell AND opens its row's step editor so
-      // the user can sketch while it waits for (or rides) the downbeat.
-      const p = this.customPatterns[row]
-      if (p) this.gridUI.openPatternEditor(row, (lane, step) => p.get(lane, step))
-    }
     this.prepPendingTracks()
     this.ensureStarted()
     this.refreshCellVisuals()
@@ -429,13 +515,28 @@ export class LoopGridMain extends BaseScriptComponent {
 
   /** Editor step toggled. Visual FIRST (the step must light the instant it is
    *  toggled — that is what sells the interaction on camera), audition after:
-   *  a newly-ON step plays its lane's one-shot as immediate feedback. */
+   *  a newly-ON step plays its lane's one-shot as immediate feedback.
+   *  Drawing the FIRST step into an empty, un-armed pattern arms the Custom
+   *  cell (opening the editor deliberately does not — see handleCellTap), so
+   *  the pattern takes over the row on the next downbeat only once there is
+   *  something to hear. Clearing back to empty while playing does NOT
+   *  auto-stop — the row predictably plays silence until the user stops it,
+   *  draws again, or launches a loop. */
   private handleStepToggle(row: number, lane: number, step: number): void {
     const p = this.customPatterns[row]
     if (!p) return
+    const wasEmpty = p.isEmpty()
     const on = p.toggle(lane, step)
     this.gridUI.setEditorStep(lane, step, on)
     if (on) this.hitLane(lane)
+    if (on && wasEmpty && this.model.active[row] !== CUSTOM_COL && !this.model.isPendingLaunch(row, CUSTOM_COL)) {
+      // Self-arm. Guards above keep this from stop-arming a playing pattern
+      // (clear-then-redraw) or cancelling an already-armed one.
+      this.model.tapCell(row, CUSTOM_COL)
+      this.playTapSfx("armed")
+      this.ensureStarted()
+      this.refreshCellVisuals()
+    }
   }
 
   private handlePatternClear(row: number): void {
