@@ -65,7 +65,9 @@ export class LoopGridTransport {
     return this._cycleIndex
   }
 
-  /** 0..1 phase within the current cycle — used by the UI armed-cell pulse. */
+  /** 0..1 phase within the current cycle. Drives the grid's cycle playhead
+   *  (LoopGridUI.tick): it wraps to 0 on the downbeat, the same frame armed
+   *  cells fire, so the sweep resetting IS the launch. */
   get cyclePhase(): number {
     return this.cycleBeats / this.beatsPerCycle
   }

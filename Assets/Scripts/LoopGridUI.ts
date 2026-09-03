@@ -132,6 +132,33 @@ function gridCellY(row: number): number {
   return GRID_TOP_Y - row * (CELL_H + GAP_Y)
 }
 
+// ── Cycle playhead ───────────────────────────────────────────────────────────
+// A hairline that sweeps left to right once per 2-bar cycle, driven by
+// LoopGridTransport.cyclePhase. It wraps to the left edge on the downbeat —
+// the same frame armed cells fire — so the wrap IS the launch moment.
+//
+// Specs renders ADDITIVELY: the display emits light and black is transparent.
+// A playhead must therefore be a BRIGHT thin line, never a dark one and never
+// a filled overlay — a dark rule would simply be invisible, and a wide band
+// would wash out the cells it crosses.
+const PLAYHEAD_W = 0.18 // ~1.8 mm at the z = -110 cm focal plane
+/** Sweep span: left edge of column 0 to right edge of the last loop column.
+ *  The Custom column (rows 0/4 only) sits outside it on purpose — all five
+ *  rows share this span, so the line never travels across bare plate where
+ *  three of the rows have no cell. */
+const PLAYHEAD_LEFT_X = gridCellX(0) - CELL_W / 2
+const PLAYHEAD_RIGHT_X = gridCellX(LOOPGRID_COLS - 1) + CELL_W / 2
+/** Spans the cell rows: top of row 0 down to the bottom of the last row. */
+const PLAYHEAD_TOP_Y = gridCellY(0) + CELL_H / 2
+const PLAYHEAD_BOTTOM_Y = gridCellY(LOOPGRID_ROWS - 1) - CELL_H / 2
+const PLAYHEAD_H = PLAYHEAD_TOP_Y - PLAYHEAD_BOTTOM_Y
+const PLAYHEAD_Y = (PLAYHEAD_TOP_Y + PLAYHEAD_BOTTOM_Y) / 2
+/** In front of the cells (z = LAYOUT_Z_LIFT) and their labels (z = 0.08). */
+const PLAYHEAD_Z = 0.12
+/** Warm white — brighter than both cell states, and a hue neither uses, so it
+ *  reads as a separate object rather than as a cell lighting up. */
+const PLAYHEAD_COLOR = new vec4(1.0, 0.93, 0.72, 1)
+
 export type CellState = "idle" | "armed" | "playing" | "stopArmed"
 
 export interface LoopGridUIConfig {
@@ -195,6 +222,8 @@ export class LoopGridUI {
   private transportText: Text | null = null
   private pulseTime = 0
   private cfg!: LoopGridUIConfig
+  /** Cycle playhead node; null before build(). Position is set every frame. */
+  private playhead: SceneObject | null = null
 
   // Pattern editor state
   private editorRoot: SceneObject | null = null
@@ -222,8 +251,13 @@ export class LoopGridUI {
     this.applyCellColor(cv)
   }
 
-  /** Advance the armed-cell pulse animation. Called every frame. */
-  tick(dt: number): void {
+  /**
+   * Advance the armed-cell pulse and the cycle playhead. Called every frame.
+   * `cyclePhase` / `running` come straight from LoopGridTransport. The two
+   * animations are complementary and independent: the pulse says a change is
+   * PENDING, the playhead says WHEN it lands.
+   */
+  tick(dt: number, cyclePhase: number, running: boolean): void {
     this.pulseTime += dt
     for (let r = 0; r < LOOPGRID_ROWS; r++) {
       // Custom rows carry one extra cell — iterate the actual row length.
@@ -232,6 +266,7 @@ export class LoopGridUI {
         if (cv.state === "armed" || cv.state === "stopArmed") this.applyCellColor(cv)
       }
     }
+    this.updatePlayhead(cyclePhase, running)
   }
 
   // ── internals ─────────────────────────────────────────────────────────────
@@ -362,6 +397,36 @@ export class LoopGridUI {
       }
       this.cells.push(rowArr)
     }
+
+    // Built LAST so it renders over the cells: hierarchy order is render order.
+    this.buildPlayhead(content)
+  }
+
+  /** The cycle playhead. Purely visual — no collider, no Interactable, no
+   *  guardedTap: it is an indicator, not a control, and nothing may target it. */
+  private buildPlayhead(parent: SceneObject): void {
+    const so = this.obj(parent, "CyclePlayhead", new vec3(PLAYHEAD_LEFT_X, PLAYHEAD_Y, PLAYHEAD_Z))
+    const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+    rmv.mesh = this.buildQuadMesh(PLAYHEAD_W, PLAYHEAD_H)
+    const mat = cellMaterial.clone()
+    mat.mainPass.baseColor = PLAYHEAD_COLOR
+    rmv.clearMaterials()
+    rmv.addMaterial(mat)
+    // Hidden until the transport runs. Safe to disable here (unlike the
+    // FlexLayout panels): a bare RenderMeshVisual has no layout to freeze.
+    so.enabled = false
+    this.playhead = so
+  }
+
+  /** Move the playhead to `phase` (0..1 through the cycle), or hide it when the
+   *  transport is stopped. Called once per frame from tick(). */
+  private updatePlayhead(phase: number, running: boolean): void {
+    if (!this.playhead) return
+    if (this.playhead.enabled !== running) this.playhead.enabled = running
+    if (!running) return
+    const p = Math.max(0, Math.min(1, phase))
+    const x = PLAYHEAD_LEFT_X + (PLAYHEAD_RIGHT_X - PLAYHEAD_LEFT_X) * p
+    this.playhead.getTransform().setLocalPosition(new vec3(x, PLAYHEAD_Y, PLAYHEAD_Z))
   }
 
   /**
@@ -487,6 +552,11 @@ export class LoopGridUI {
 
   /** One shared quad mesh at exact cell size — no scale on collider-bearing nodes. */
   private buildCellMesh(): RenderMesh {
+    return this.buildQuadMesh(CELL_W, CELL_H)
+  }
+
+  /** Centered w x h quad in the XY plane, facing +Z. */
+  private buildQuadMesh(w: number, h: number): RenderMesh {
     const mb = new MeshBuilder([
       { name: "position", components: 3 },
       { name: "normal", components: 3 },
@@ -494,8 +564,8 @@ export class LoopGridUI {
     ])
     mb.topology = MeshTopology.Triangles
     mb.indexType = MeshIndexType.UInt16
-    const hw = CELL_W / 2
-    const hh = CELL_H / 2
+    const hw = w / 2
+    const hh = h / 2
     // CCW when viewed from +Z (toward the camera at the -110 focal plane)
     mb.appendVerticesInterleaved([
       -hw, -hh, 0, 0, 0, 1, 0, 0,
@@ -660,24 +730,7 @@ export class LoopGridUI {
 
   /** Shared step-toggle quad (STEP_W x STEP_H — smaller than the cell quad). */
   private buildStepMesh(): RenderMesh {
-    const mb = new MeshBuilder([
-      { name: "position", components: 3 },
-      { name: "normal", components: 3 },
-      { name: "texture0", components: 2 },
-    ])
-    mb.topology = MeshTopology.Triangles
-    mb.indexType = MeshIndexType.UInt16
-    const hw = STEP_W / 2
-    const hh = STEP_H / 2
-    mb.appendVerticesInterleaved([
-      -hw, -hh, 0, 0, 0, 1, 0, 0,
-      hw, -hh, 0, 0, 0, 1, 1, 0,
-      hw, hh, 0, 0, 0, 1, 1, 1,
-      -hw, hh, 0, 0, 0, 1, 0, 1,
-    ])
-    mb.appendIndices([0, 1, 2, 0, 2, 3])
-    mb.updateMesh()
-    return mb.getMesh()
+    return this.buildQuadMesh(STEP_W, STEP_H)
   }
 
   // ── controller -> editor API ──────────────────────────────────────────────

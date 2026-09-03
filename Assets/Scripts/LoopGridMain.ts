@@ -38,7 +38,8 @@
  */
 
 import { LoopGridTransport } from "./LoopGridTransport"
-import { LoopGridModel, LOOPGRID_ROWS, LOOPGRID_COLS, CUSTOM_COL, CUSTOM_ROWS } from "./LoopGridModel"
+import { LoopGridModel, LOOPGRID_ROWS, LOOPGRID_COLS, CUSTOM_COL, CUSTOM_ROWS, ROW_LETTERS } from "./LoopGridModel"
+import { LoopGridStore, StoredPatterns } from "./LoopGridStore"
 import { LoopGridExportEncoder, CustomPatternExports } from "./LoopGridExportEncoder"
 import { LoopGridCustomPattern, CUSTOM_LANES, CUSTOM_STEPS } from "./LoopGridCustomPattern"
 import { LoopGridUI, CellState } from "./LoopGridUI"
@@ -229,6 +230,8 @@ export class LoopGridMain extends BaseScriptComponent {
   private encoder = new LoopGridExportEncoder()
   private gridUI = new LoopGridUI()
   private exportUI = new LoopGridExportPanelUI()
+  /** Cross-session save. Constructing touches no storage — see LoopGridStore. */
+  private store = new LoopGridStore()
 
   /**
    * Pooled loop players: 2 per row instead of 1 per cell (12 AudioComponents
@@ -248,6 +251,10 @@ export class LoopGridMain extends BaseScriptComponent {
   private armAudio: AudioComponent | null = null
   private stopAudio: AudioComponent | null = null
   private lastTransportText = ""
+  /** Header-hint state — the only session facts the model/transport cannot
+   *  supply, because both describe NOW and these are "has the user ever". */
+  private hasEverLaunched = false
+  private hasExported = false
 
   /**
    * Custom-pattern one-shot players: 2 per lane, round-robin (10 total), so a
@@ -311,7 +318,55 @@ export class LoopGridMain extends BaseScriptComponent {
     this.gridUI.onStepToggle.add(({ row, lane, step }) => this.handleStepToggle(row, lane, step))
     this.gridUI.onPatternClear.add((row) => this.handlePatternClear(row))
 
+    // First storage touch of the Lens, and it happens HERE — inside the
+    // OnStartEvent handler, after the UI exists so restored cells can paint.
+    this.restoreSession()
+
     this.updateTransportText()
+  }
+
+  /**
+   * Bring back the previous session: the two custom patterns, and the cells
+   * each row was playing — ARMED, never sounding. Nothing here starts audio or
+   * the transport; the restored cells pulse as pending and commit on the first
+   * downbeat, which only a user tap can trigger (see ensureStarted).
+   *
+   * The timeline is deliberately left empty: whatever the user launches last
+   * session is not history for this one, so the export starts fresh at bar 0
+   * and the LG1 format sees nothing unusual.
+   */
+  private restoreSession(): void {
+    const saved = this.store.load()
+    if (!saved) return
+
+    const packed = saved.patterns as Record<string, string | undefined>
+    for (const r of CUSTOM_ROWS) {
+      const p = this.customPatterns[r]
+      const hex = packed[ROW_LETTERS[r]]
+      // unpack() rejects a malformed string itself and leaves the pattern
+      // empty — belt and braces on top of the store's own validation.
+      if (p && hex !== undefined) p.unpack(hex)
+    }
+
+    let armed = 0
+    for (let r = 0; r < LOOPGRID_ROWS; r++) {
+      const col = saved.cells[r]
+      if (col < 0) continue
+      this.model.tapCell(r, col) // from a clean row this simply arms it
+      armed++
+    }
+    if (armed > 0) this.refreshCellVisuals()
+  }
+
+  /** Persist the groove. Called on meaningful change only — a pattern edit or
+   *  a committed downbeat — never per frame. */
+  private saveSession(): void {
+    const patterns: StoredPatterns = {}
+    const dp = this.customPatterns[0]
+    if (dp) patterns.D = dp.pack()
+    const pp = this.customPatterns[4]
+    if (pp) patterns.P = pp.pack()
+    this.store.save(this.model.active, patterns)
   }
 
   /** Create the 22 AudioComponents (5 rows x 2 pooled loop slots + 5 lanes x
@@ -380,7 +435,7 @@ export class LoopGridMain extends BaseScriptComponent {
       const steps = this.transport.takeSteps()
       if (steps.length > 0) this.playPatternSteps(steps)
     }
-    this.gridUI.tick(dt)
+    this.gridUI.tick(dt, this.transport.cyclePhase, this.transport.running)
     this.updateTransportText()
   }
 
@@ -458,6 +513,9 @@ export class LoopGridMain extends BaseScriptComponent {
         if (a) a.play(-1)
       }
       this.refreshCellVisuals()
+      // "Launched" means audible, not armed — set it here, after the commit.
+      if (this.model.hasAnyActive()) this.hasEverLaunched = true
+      this.saveSession() // cells committed on a downbeat
     }
     // Nothing sounding and nothing queued: halt the clock so the next tap
     // launches instantly instead of waiting out a silent cycle.
@@ -537,6 +595,7 @@ export class LoopGridMain extends BaseScriptComponent {
       this.ensureStarted()
       this.refreshCellVisuals()
     }
+    this.saveSession() // pattern edited
   }
 
   private handlePatternClear(row: number): void {
@@ -544,6 +603,7 @@ export class LoopGridMain extends BaseScriptComponent {
     if (!p) return
     p.clear()
     this.gridUI.refreshEditorSteps((lane, step) => p.get(lane, step))
+    this.saveSession() // pattern edited
   }
 
   private handleSceneTap(col: number): void {
@@ -573,6 +633,8 @@ export class LoopGridMain extends BaseScriptComponent {
     const code = this.encoder.encode(this.model.timeline, BPM, KEY_NAME, lastBar, patterns)
     this.gridUI.closePatternEditor()
     this.exportUI.showExport(code)
+    // The Export nudge has served its purpose — retire it for this session.
+    this.hasExported = true
   }
 
   /** First interaction while silent: start the clock and fire the downbeat NOW
@@ -607,12 +669,49 @@ export class LoopGridMain extends BaseScriptComponent {
   }
 
   private updateTransportText(): void {
-    const s = this.transport.running
-      ? "Bar " + this.transport.barNumber + "." + this.transport.beatInBar + " · " + BPM + " BPM · " + KEY_NAME
-      : "Tap a cell to start · " + BPM + " BPM · " + KEY_NAME
+    const s = this.hintText() + " · " + BPM + " BPM · " + KEY_NAME
+    // Called every frame: only push when the string actually changes, so the
+    // Text component is not rewritten ~60x a second for an identical value.
     if (s !== this.lastTransportText) {
       this.lastTransportText = s
       this.gridUI.setTransportText(s)
     }
+  }
+
+  /**
+   * The header's leading phrase: what this user should do NEXT, from live
+   * session state. Ordered most-specific first — the first match wins.
+   *
+   * A pending change outranks everything: while something is waiting for the
+   * downbeat, "when does this land" is the only question the user has. The
+   * remaining tiers walk the learning curve — start, layer, scenes, export —
+   * and each one stops appearing once its lesson is behind the user (the
+   * Export nudge disappears for good after the first export).
+   *
+   * Derived entirely from the model and transport plus the two "has the user
+   * done this yet" flags, which nothing else can know.
+   */
+  private hintText(): string {
+    // Gated on `running`: a RESTORED session is armed while the clock is
+    // stopped, and there is no next downbeat until the user taps. Promising
+    // one would be a lie the Lens cannot keep.
+    if (this.transport.running && this.model.hasAnyPending()) return "Launching on the next downbeat…"
+
+    let playing = 0
+    for (let r = 0; r < LOOPGRID_ROWS; r++) {
+      if (this.model.active[r] >= 0) playing++
+    }
+
+    if (playing === 0) {
+      // After a stop-all the "how do I start" prompt would be condescending —
+      // they have already done it once.
+      return this.hasEverLaunched ? "Stopped" : "Tap any cell to start"
+    }
+    // barNumber is 1-based, so elapsed bars is one less.
+    if (playing >= 3 && !this.hasExported && this.transport.barNumber - 1 >= 8) {
+      return "Tap Export to send this to GarageBand"
+    }
+    if (playing >= 2) return "Tap a column header to switch the whole scene"
+    return "Tap another row to layer a sound"
   }
 }
