@@ -536,6 +536,15 @@ export class LoopGridMain extends BaseScriptComponent {
             // Fallback only — arm-time prep should always have run. The
             // LowLatency preload lands on the downbeat frame here, which is
             // exactly the hitch the pool must avoid, so it is instrumented.
+            //
+            // The print below is an INTENTIONAL CANARY, deliberately kept in
+            // the shipping build. This branch is unreachable in correct
+            // operation, so it is silent in every normal session and costs
+            // nothing; if it ever fires, arm-time prep has regressed and the
+            // next launch will audibly hitch. That is the one failure the
+            // whole pooled-slot design exists to prevent, and this line is
+            // the only thing that would tell us it happened. Do not remove it
+            // as "leftover debug output" — it is not reporting normal work.
             s = this.playingSlotIdx[r] === 0 ? 1 : 0
             const lateT0 = getTime()
             this.rowSlots[r][s].audioTrack = LOOP_TRACKS[r][col]

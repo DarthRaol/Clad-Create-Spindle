@@ -130,6 +130,11 @@ happens inside a song:
 
 ## What to verify
 
+**The import route itself is confirmed working on a real device.** MIDI
+exported by this kit imports into GarageBand on iOS and plays. What follows is
+a per-file checklist for checking your own arrangement — not an open question
+about whether the path works.
+
 - **Minimal** imports as exactly 2 tracks (Drums, Bass) — no empty extras.
 - **Demo**: region changes land exactly on bars 4, 8, 16, 24, 28; loops repeat
   seamlessly every 2 bars; nothing sounds after bar 28.
@@ -170,3 +175,29 @@ wrong arrangement — re-read the code from the panel if that happens.
 The browser page does both routes from the same pasted code: the MIDI downloads
 are built locally in the page (no network needed), while the Live Loops WAV
 links download from the site, so grab those while you are online.
+
+## Not verified on Specs hardware
+
+The export path is settled: the converter is covered by an automated test
+suite, and MIDI import into GarageBand on iOS is confirmed working on a real
+device.
+
+The items below are Lens-side behaviours that have only ever been exercised in
+the Lens Studio preview, never on Specs hardware. The simulator cannot settle
+any of them:
+
+- **Poke on the guarded buttons.** Stop All and the column headers use the
+  travel guard, which requires a clean hover before the trigger fires. The
+  simulator's fingertip enters a collider in the same frame it hovers it, so it
+  can never satisfy the guard by poke; a real finger crosses the hover zone
+  first. Confirm a real poke-press registers on those controls.
+- **Ray + pinch feel at the 110 cm focal plane.** Cell size, spacing, and the
+  minimum-aim threshold were tuned against the preview, not against a hand at
+  arm's length.
+- **Engine-side audio onset.** Script-side timing shows no frame hitch at
+  launch, but no script-side measurement can see a delay inside the audio
+  engine's own onset. A listen on device is the final word on whether
+  quantized launches actually sound tight.
+- **The 16-step pattern editor grid.** The step toggles are the smallest
+  targets in the Lens; whether they are comfortably hittable on device is
+  untested.
