@@ -39,7 +39,7 @@ const FONT_SIZE_SCALE = 1.0
 
 type TextRole =
   | "Title1" | "Title2" | "HeadlineXL" | "Headline1" | "Headline2"
-  | "Subheadline" | "Button" | "Callout" | "Body" | "Caption"
+  | "Subheadline" | "Button" | "Callout" | "Body" | "Caption" | "Code"
 
 const TYPE_SCALE: Record<TextRole, { size: number; weight: number }> = {
   Title1: { size: 105, weight: 700 },
@@ -52,6 +52,10 @@ const TYPE_SCALE: Record<TextRole, { size: number; weight: number }> = {
   Callout: { size: 39, weight: 700 },
   Body: { size: 39, weight: 500 },
   Caption: { size: 38, weight: 500 },
+  // The export code is READ OFF THIS PANEL AND TYPED ON A PHONE, on camera.
+  // Bigger and bolder than body copy on purpose: it is the one string in the
+  // Lens a human has to reproduce character for character.
+  Code: { size: 50, weight: 700 },
 }
 
 function roleSize(role: TextRole, distanceCm: number = 110): number {
@@ -61,6 +65,49 @@ function roleSize(role: TextRole, distanceCm: number = 110): number {
 function applyTextRole(t: Text, role: TextRole, distanceCm: number = 110): void {
   t.size = roleSize(role, distanceCm)
   ;(t as Text & { weight?: number }).weight = TYPE_SCALE[role].weight
+}
+
+/** Companion tool, shown on the panel for the user to type on a phone.
+ *  Written without the scheme so it stays short and thumb-typeable; browsers
+ *  fill in https. Update here if the Pages site moves. */
+const COMPANION_URL = "darthraol.github.io/Clad-Create-Spindle"
+
+/** Max characters per displayed code line — tuned against the Code role size
+ *  and the wrap width below so no line overflows the plate. */
+const MAX_CODE_CHARS = 28
+
+/**
+ * Break the LG1 code into short lines a person can keep their place in while
+ * typing. Splits on "|" boundaries and keeps each pipe at the END of its line
+ * so the sequence stays unambiguous; a segment longer than one line is
+ * hard-split. Reading the lines top to bottom reproduces the code EXACTLY —
+ * this is presentation only and must never alter the string.
+ */
+function chunkCode(code: string): string {
+  const parts = code.split("|")
+  const segments: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const seg = i < parts.length - 1 ? parts[i] + "|" : parts[i]
+    if (seg.length === 0) continue
+    if (seg.length <= MAX_CODE_CHARS) {
+      segments.push(seg)
+      continue
+    }
+    for (let j = 0; j < seg.length; j += MAX_CODE_CHARS) {
+      segments.push(seg.substring(j, j + MAX_CODE_CHARS))
+    }
+  }
+  const lines: string[] = []
+  let line = ""
+  for (const seg of segments) {
+    if (line.length > 0 && line.length + seg.length > MAX_CODE_CHARS) {
+      lines.push(line)
+      line = ""
+    }
+    line += seg
+  }
+  if (line.length > 0) lines.push(line)
+  return lines.join("\n")
 }
 
 const PANEL_W = 36
@@ -96,22 +143,19 @@ export class LoopGridExportPanelUI {
       col.direction = FlexDirection.Column
       col.alignItems = FlexAlign.Stretch
       col.justifyContent = FlexJustify.Start
-      col.rowGap = 0.9
-      col.paddingTop = 1.6
-      col.paddingBottom = 1.4
+      col.rowGap = 0.6
+      col.paddingTop = 1.3
+      col.paddingBottom = 1.1
       col.paddingLeft = 2.0
       col.paddingRight = 2.0
     })
 
-    this.addColumnText(content, "Export to GarageBand", "Callout", 2.0, false)
-    this.codeText = this.addColumnText(content, "-", "Body", 7.5, true)
-    this.addColumnText(
-      content,
-      "Copy this code into the LoopGrid companion tool to get a MIDI file for GarageBand.",
-      "Caption",
-      3.4,
-      true
-    )
+    // Row budget is tuned to PANEL_H — the plate size is fixed, so the code
+    // gets the space and everything else is trimmed to fit around it.
+    this.addColumnText(content, "Export to GarageBand", "Callout", 1.8, false)
+    this.codeText = this.addColumnText(content, "-", "Code", 7.8, true)
+    this.addColumnText(content, "Type this code at", "Caption", 1.4, false)
+    this.addColumnText(content, COMPANION_URL, "Subheadline", 2.0, false)
 
     // Close button — its own centered row
     const closeRow = this.obj(content, "CloseRow")
@@ -137,7 +181,8 @@ export class LoopGridExportPanelUI {
 
   showExport(code: string): void {
     if (!this.root) return
-    if (this.codeText) this.codeText.text = code
+    // Displayed in chunked lines for readability; the code itself is unchanged.
+    if (this.codeText) this.codeText.text = chunkCode(code)
     this.root.getTransform().setLocalPosition(SHOWN_POS)
   }
 

@@ -17,61 +17,94 @@
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1b1a; --muted: #6b6862;
-    --line: #dedad2; --accent: #7a4dd8; --accent-ink: #ffffff;
+    --line: #dedad2; --accent: #6d3fd0; --accent-ink: #ffffff;
+    --accent-soft: #f0e9ff;
     --warn-bg: #fff4dc; --warn-line: #e0b34c; --ok: #2c7a4b; --err: #b3372f;
     --code-bg: #efece6;
+    --shadow: 0 1px 2px rgba(28,27,26,.05), 0 6px 18px rgba(28,27,26,.05);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161514; --panel: #201f1d; --ink: #ece9e4; --muted: #9b968e;
-      --line: #38352f; --accent: #9d79ec; --accent-ink: #17111f;
+      --line: #38352f; --accent: #a687f0; --accent-ink: #17111f;
+      --accent-soft: #2a2338;
       --warn-bg: #2e2718; --warn-line: #9c7c2f; --ok: #6cc793; --err: #e07a72;
       --code-bg: #2a2825;
+      --shadow: none;
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 17px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-text-size-adjust: 100%;
   }
-  main { max-width: 680px; margin: 0 auto; padding: 32px 20px 64px; }
-  h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 24px; }
+  main {
+    max-width: 680px; margin: 0 auto;
+    padding: 28px max(18px, env(safe-area-inset-left)) calc(64px + env(safe-area-inset-bottom));
+  }
+  h1 { font-size: 1.8rem; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 1rem; }
   section {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 18px 20px; margin-bottom: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px 18px; margin-bottom: 14px; box-shadow: var(--shadow);
   }
-  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  h2 {
+    font-size: 1.15rem; line-height: 1.25; letter-spacing: -0.01em;
+    margin: 0 0 12px;
+  }
   textarea {
-    width: 100%; min-height: 72px; resize: vertical; border-radius: 8px;
-    border: 1px solid var(--line); background: var(--code-bg); color: var(--ink);
-    font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 10px;
+    width: 100%; min-height: 96px; resize: vertical; border-radius: 10px;
+    border: 1.5px solid var(--line); background: var(--code-bg); color: var(--ink);
+    /* 16px minimum: anything smaller makes iOS Safari zoom on focus. */
+    font: 16px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    padding: 12px; letter-spacing: 0.01em;
   }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
   button {
-    font: inherit; border: 0; border-radius: 8px; padding: 10px 18px;
-    background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 600;
+    font: inherit; font-weight: 650; border: 0; border-radius: 11px;
+    /* 48px floor: a thumb target, not a mouse target. */
+    min-height: 48px; padding: 12px 20px;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer;
   }
-  button.secondary { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
-  button:disabled { opacity: 0.45; cursor: not-allowed; }
-  .error { color: var(--err); font-weight: 600; margin-top: 10px; }
+  button.secondary { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #decode { width: 100%; font-size: 1.05rem; }
+  .error { color: var(--err); font-weight: 600; margin-top: 12px; }
   .hidden { display: none; }
-  table { border-collapse: collapse; width: 100%; margin-top: 6px; }
-  td, th { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
-  th { color: var(--muted); font-weight: 600; }
-  tr:last-child td { border-bottom: 0; }
+  table { border-collapse: collapse; width: 100%; margin-top: 4px; }
+  td, th { text-align: left; padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); }
+  th {
+    color: var(--muted); font-weight: 600; font-size: 0.74rem;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    white-space: nowrap; width: 1%; vertical-align: middle;
+  }
+  td { font-size: 1rem; }
+  tr:last-child td, tr:last-child th { border-bottom: 0; }
+  /* WAV links are the tap target in the Live Loops list — size them like one. */
+  #cells a {
+    display: inline-block; min-height: 44px; line-height: 28px;
+    padding: 8px 14px; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 650; text-decoration: none; word-break: break-all;
+  }
+  #cells a:active { opacity: 0.7; }
   .checklist {
-    background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 12px;
-    padding: 18px 20px; margin-bottom: 16px;
+    background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px;
+    padding: 20px 18px; margin-bottom: 14px;
   }
   .checklist h2 { margin-bottom: 6px; }
-  .checklist ul { margin: 8px 0 0; padding-left: 22px; }
-  .checklist li { margin-bottom: 6px; }
+  .checklist ul { margin: 10px 0 0; padding-left: 22px; }
+  .checklist li { margin-bottom: 8px; }
   .checklist strong { font-variant-numeric: tabular-nums; }
-  ol.steps { margin: 8px 0 0; padding-left: 22px; }
-  ol.steps li { margin-bottom: 8px; }
-  .dl-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
-  .hint { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; }
-  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; }
+  ol.steps { margin: 10px 0 0; padding-left: 24px; }
+  ol.steps li { margin-bottom: 10px; }
+  ol.steps li::marker { color: var(--accent); font-weight: 700; }
+  .dl-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  .dl-row button { flex: 1 1 46%; }
+  @media (max-width: 430px) { .dl-row button { flex: 1 1 100%; } }
+  .hint { color: var(--muted); font-size: 0.9rem; line-height: 1.5; margin: 10px 0 0; }
+  code { background: var(--code-bg); border-radius: 5px; padding: 2px 6px; font-size: 0.88em; }
   .muted { color: var(--muted); }
 </style>
 </head>
