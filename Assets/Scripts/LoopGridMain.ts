@@ -347,6 +347,11 @@ export class LoopGridMain extends BaseScriptComponent {
     this.gridUI.onExport.add(() => this.handleExport())
     this.gridUI.onStepToggle.add(({ row, lane, step }) => this.handleStepToggle(row, lane, step))
     this.gridUI.onPatternClear.add((row) => this.handlePatternClear(row))
+    // Both overlays report their own closes — the editor's Close button and
+    // the export panel's are handled inside those classes, so these are the
+    // only way the controller learns an overlay went away.
+    this.gridUI.onEditorClosed.add(() => this.syncSurfaceVisibility())
+    this.exportUI.onClose.add(() => this.syncSurfaceVisibility())
 
     // First storage touch of the Lens, and it happens HERE — inside the
     // OnStartEvent handler, after the UI exists so restored cells can paint.
@@ -366,6 +371,25 @@ export class LoopGridMain extends BaseScriptComponent {
    */
   private handleIntroStart(): void {
     if (this.gridRoot) this.gridRoot.getTransform().setLocalPosition(GRID_SHOWN_POS)
+  }
+
+  /**
+   * THE single decision point for grid-surface visibility: the surface is
+   * visible exactly when NO overlay is open.
+   *
+   * Deliberately derived from current state rather than parked/unparked by
+   * each overlay as it opens and closes. Export closes the step editor and
+   * opens the export panel in the same frame, so two overlays each issuing
+   * their own park/unpark would fight — the editor's close would reveal the
+   * grid underneath the export panel, or a stale unpark would strand the
+   * surface off-screen. Asking "is anything open?" cannot produce either.
+   *
+   * Call after every overlay show or hide. Cheap and idempotent, so calling
+   * it twice in one frame is fine.
+   */
+  private syncSurfaceVisibility(): void {
+    const overlayOpen = this.gridUI.patternEditorOpen || this.exportUI.visible
+    this.gridUI.setSurfaceVisible(!overlayOpen)
   }
 
   /**
@@ -613,6 +637,8 @@ export class LoopGridMain extends BaseScriptComponent {
       const p = this.customPatterns[row]
       if (!p) return
       this.gridUI.openPatternEditor(row, (lane, step) => p.get(lane, step))
+      // Before the early return below, so both exits leave the grid parked.
+      this.syncSurfaceVisibility()
       const idle = this.model.active[row] !== CUSTOM_COL && !this.model.isPendingLaunch(row, CUSTOM_COL)
       if (idle && p.isEmpty()) return
     }
@@ -683,8 +709,12 @@ export class LoopGridMain extends BaseScriptComponent {
     const pp = this.customPatterns[4]
     if (pp) patterns.P = pp.pack()
     const code = this.encoder.encode(this.model.timeline, BPM, KEY_NAME, lastBar, patterns)
+    // closePatternEditor fires onEditorClosed, which syncs with the export
+    // panel not yet shown; syncing again after showExport settles it. Both
+    // happen in this one call stack, so no frame renders in between.
     this.gridUI.closePatternEditor()
     this.exportUI.showExport(code)
+    this.syncSurfaceVisibility()
     // The Export nudge has served its purpose — retire it for this session.
     this.hasExported = true
   }

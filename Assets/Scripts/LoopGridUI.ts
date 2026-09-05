@@ -200,6 +200,10 @@ const EDITOR_BTN_Y = -9.0
  *  the export panel (z=4) never shows at the same time — export closes it. */
 const EDITOR_SHOWN_POS = new vec3(0, 2, 5)
 const EDITOR_HIDDEN_POS = new vec3(0, 2, -3000)
+/** Parked z for the interactive grid surface while an overlay is open. Same
+ *  -3000 convention as the overlay panels; only z moves, so x/y can never
+ *  drift across a toggle and the surface returns exactly where build put it. */
+const SURFACE_HIDDEN_Z = -3000
 
 function stepX(step: number): number {
   return STEP_LEFT_X + step * (STEP_W + STEP_GAP_X)
@@ -217,6 +221,10 @@ export class LoopGridUI {
   /** Pattern-editor step toggled. row = the row whose editor is open. */
   readonly onStepToggle = new Event<{ row: number; lane: number; step: number }>()
   readonly onPatternClear = new Event<number>()
+  /** Editor closed — including from its OWN Close button, which the controller
+   *  never sees otherwise. The controller needs it to re-evaluate whether any
+   *  overlay is still open (see LoopGridMain.syncSurfaceVisibility). */
+  readonly onEditorClosed = new Event<void>()
 
   private cells: CellVisual[][] = []
   private transportText: Text | null = null
@@ -224,6 +232,18 @@ export class LoopGridUI {
   private cfg!: LoopGridUIConfig
   /** Cycle playhead node; null before build(). Position is set every frame. */
   private playhead: SceneObject | null = null
+  /**
+   * The top-level containers carrying every collider in the grid surface —
+   * the cell grid (with the scene/column buttons and row labels) and the
+   * control row (Stop All, Export) — each paired with the local position its
+   * own build gave it. Parked as a set while an overlay is open; see
+   * setSurfaceVisible.
+   *
+   * The header bar is deliberately NOT here: it holds no Interactable, it
+   * does not overlap the editor panel, and its bar/transport readout stays
+   * useful while a pattern is being drawn.
+   */
+  private surfaceRoots: { so: SceneObject; shown: vec3 }[] = []
 
   // Pattern editor state
   private editorRoot: SceneObject | null = null
@@ -346,6 +366,7 @@ export class LoopGridUI {
 
   private buildGridPanel(host: SceneObject): void {
     const panel = this.obj(host, "GridPanel", new vec3(0, GRIDPANEL_Y, 0))
+    this.surfaceRoots.push({ so: panel, shown: new vec3(0, GRIDPANEL_Y, 0) })
     const plate = panel.createComponent(BackPlate.getTypeName()) as BackPlate
     // 58 wide (was 50): the 9th Custom column on rows 0/4 sits at
     // gridCellX(8) = 26.3, so the plate must reach past x = 28.6.
@@ -580,6 +601,7 @@ export class LoopGridUI {
 
   private buildControlRow(host: SceneObject): void {
     const rowHost = this.obj(host, "ControlRow", new vec3(0, CONTROL_Y, 0))
+    this.surfaceRoots.push({ so: rowHost, shown: new vec3(0, CONTROL_Y, 0) })
     const rowFlex = rowHost.createComponent(FlexLayout.getTypeName()) as FlexLayout
     rowFlex.autoDiscoverItemsOnStart = false
     rowFlex.onInitialized.add(() => {
@@ -750,6 +772,32 @@ export class LoopGridUI {
     if (!this.editorRoot) return
     this.editorRoot.getTransform().setLocalPosition(EDITOR_HIDDEN_POS)
     this.editorRow = -1
+    this.onEditorClosed.invoke()
+  }
+
+  /** Whether the step editor is currently open. Derived from editorRow, which
+   *  openPatternEditor/closePatternEditor already maintain — no new state. */
+  get patternEditorOpen(): boolean {
+    return this.editorRow >= 0
+  }
+
+  /**
+   * Park or restore the interactive grid surface as a set.
+   *
+   * Parking, not disabling: colliders travel with the transform, so a parked
+   * surface is untouchable for free, whereas disabling the subtree would
+   * freeze its FlexLayout (see the LoopGridExportPanelUI header). Only z
+   * moves, so the surface returns to exactly the position build gave it.
+   *
+   * Purely a visibility/reach change. Audio lives on separate SceneObjects
+   * and is not touched; the transport keeps running; cell visuals keep
+   * updating off-screen and are already correct when the surface returns.
+   */
+  setSurfaceVisible(visible: boolean): void {
+    for (const r of this.surfaceRoots) {
+      const p = r.shown
+      r.so.getTransform().setLocalPosition(visible ? p : new vec3(p.x, p.y, SURFACE_HIDDEN_Z))
+    }
   }
 
   setEditorStep(lane: number, step: number, on: boolean): void {
