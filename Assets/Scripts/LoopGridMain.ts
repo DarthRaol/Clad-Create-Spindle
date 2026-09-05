@@ -44,6 +44,7 @@ import { LoopGridExportEncoder, CustomPatternExports } from "./LoopGridExportEnc
 import { LoopGridCustomPattern, CUSTOM_LANES, CUSTOM_STEPS } from "./LoopGridCustomPattern"
 import { LoopGridUI, CellState } from "./LoopGridUI"
 import { LoopGridExportPanelUI } from "./LoopGridExportPanelUI"
+import { LoopGridIntroUI } from "./LoopGridIntroUI"
 
 // ── Loop assets: [row][col], rows = Drums, Bass, Keys, Lead, Perc ────────────
 // requireAsset takes string literals only, hence the explicit 40-entry table.
@@ -115,6 +116,20 @@ const HIT_TRACKS: AudioTrackAsset[] = [
 const BPM = 105
 const KEY_NAME = "Am"
 const ROW_LABELS = ["Drums", "Bass", "Keys", "Lead", "Perc"]
+
+/**
+ * The whole grid surface is built into one container SceneObject so the intro
+ * can hide it with a single transform. The container is identity-local, so
+ * every panel keeps exactly the position its own build gives it — LoopGridUI
+ * is unchanged and unaware of this.
+ *
+ * Parked, never disabled: the grid's panels are FlexLayout-driven, and
+ * disabling the subtree on the frame it was built freezes that layout at the
+ * origin (see the LoopGridExportPanelUI header). Parking keeps layout live and
+ * takes the colliders out of reach with it, so a parked grid cannot be tapped.
+ */
+const GRID_SHOWN_POS = new vec3(0, 0, 0)
+const GRID_HIDDEN_POS = new vec3(0, 0, -3000)
 
 @component
 export class LoopGridMain extends BaseScriptComponent {
@@ -230,6 +245,9 @@ export class LoopGridMain extends BaseScriptComponent {
   private encoder = new LoopGridExportEncoder()
   private gridUI = new LoopGridUI()
   private exportUI = new LoopGridExportPanelUI()
+  private introUI = new LoopGridIntroUI()
+  /** Container holding the whole grid surface; parked until Start is tapped. */
+  private gridRoot: SceneObject | null = null
   /** Cross-session save. Constructing touches no storage — see LoopGridStore. */
   private store = new LoopGridStore()
 
@@ -302,7 +320,15 @@ export class LoopGridMain extends BaseScriptComponent {
 
     this.buildAudio()
 
-    this.gridUI.build(this.sceneObject, {
+    // Build the grid into its own container, already parked, so the intro is
+    // the only thing on screen at Lens start. Nothing about the grid's build
+    // changes — it just gets a container instead of the root as its host.
+    const gridRoot = global.scene.createSceneObject("GridRoot")
+    gridRoot.setParent(this.sceneObject)
+    gridRoot.getTransform().setLocalPosition(GRID_HIDDEN_POS)
+    this.gridRoot = gridRoot
+
+    this.gridUI.build(gridRoot, {
       idleColor: this.idleCellColor,
       armedColor: this.armedCellColor,
       playingColor: this.playingCellColor,
@@ -310,6 +336,10 @@ export class LoopGridMain extends BaseScriptComponent {
       minAimSeconds: this.cellMinAimSeconds,
     })
     this.exportUI.build(this.sceneObject)
+    // Built last so it renders in front (hierarchy order is render order), and
+    // built VISIBLE — the intro is what the user sees on Lens start.
+    this.introUI.build(this.sceneObject)
+    this.introUI.onStartTapped.add(() => this.handleIntroStart())
 
     this.gridUI.onCellTap.add(({ row, col }) => this.handleCellTap(row, col))
     this.gridUI.onSceneTap.add((col) => this.handleSceneTap(col))
@@ -323,6 +353,19 @@ export class LoopGridMain extends BaseScriptComponent {
     this.restoreSession()
 
     this.updateTransportText()
+  }
+
+  /**
+   * Start tapped: park the intro (it already parked itself) and bring the grid
+   * in. One-way — nothing in the session shows the intro again.
+   *
+   * Deliberately does NOT touch the transport. It is not running at this point
+   * and must not be: the clock only starts once the user taps a cell (see
+   * ensureStarted), so revealing the grid stays silent even when a restored
+   * session has cells armed and waiting.
+   */
+  private handleIntroStart(): void {
+    if (this.gridRoot) this.gridRoot.getTransform().setLocalPosition(GRID_SHOWN_POS)
   }
 
   /**
